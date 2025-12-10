@@ -1,0 +1,111 @@
+import 'package:flutter/foundation.dart';
+
+/// API 配置类
+class ApiConfig {
+  // 默认服务器配置
+  // 🔥 自动根据debug/release模式切换服务器地址
+  // Debug模式: 使用本地服务器 192.168.1.6
+  // Release模式: 使用生产服务器 31.57.65.73
+  static final String defaultHost = kDebugMode ? '192.168.1.6' : '31.57.65.73';
+  static const String defaultPort = '8080';
+  static const String defaultWSPort = '8081'; // WebSocket端口
+
+  // 当前服务器配置（可以被用户修改）
+  static String _currentHost = defaultHost;
+  static String _currentPort = defaultPort;
+  static String _currentWSPort = defaultWSPort;
+
+  /// 获取当前主机地址
+  static String get host => _currentHost;
+
+  /// 获取当前端口
+  static String get port => _currentPort;
+
+  /// 获取当前WebSocket端口
+  static String get wsPort => _currentWSPort;
+
+  /// 获取完整的 base URL
+  static String get baseUrl => 'http://$_currentHost:$_currentPort';
+
+  /// 获取完整的 WebSocket URL
+  static String get wsBaseUrl => 'ws://$_currentHost:$_currentWSPort';
+
+  /// 设置服务器地址
+  static void setServer(String host, String port, {String? wsPort}) {
+    _currentHost = host;
+    _currentPort = port;
+    if (wsPort != null) {
+      _currentWSPort = wsPort;
+    }
+  }
+
+  /// 重置为默认服务器
+  static void resetToDefault() {
+    _currentHost = defaultHost;
+    _currentPort = defaultPort;
+    _currentWSPort = defaultWSPort;
+  }
+
+  // API 接口路径
+  static const String authRegister = '/api/auth/register';
+  static const String authLogin = '/api/auth/login';
+  static const String authVerifyCodeSend = '/api/auth/verify-code/send';
+  static const String authVerifyCodeLogin = '/api/auth/verify-code/login';
+  static const String authForgotPassword = '/api/auth/forgot-password';
+  static const String configServer = '/api/config/server';
+  static const String user = '/api/user';
+  static const String userProfile = '/api/user/profile';
+  static const String userWorkSignature = '/api/user/work-signature';
+  static const String userStatus = '/api/user/status';
+  static const String userChangePassword = '/api/user/change-password';
+  static const String uploadImage = '/api/upload/image';
+  static const String uploadFile = '/api/upload/file';
+  static const String uploadAvatar = '/api/upload/avatar';
+  static const String uploadVideoChunk = '/api/upload/video/chunk';
+  
+  // OSS分片直传API
+  static const String ossInitiateMultipart = '/api/oss/initiate_multipart';
+  static const String ossSignPart = '/api/oss/sign_part';
+  static const String ossCompleteMultipart = '/api/oss/complete_multipart';
+  static const String ossGetOpusUploadUrl = '/api/oss/get_opus_upload_url';
+  static const String contacts = '/api/contacts';
+  static const String messages = '/api/messages';
+  static const String messagesRecentContacts = '/api/messages/recent-contacts';
+  static const String messagesHistory = '/api/messages/history';
+  static const String favorites = '/api/favorites';
+  static const String groups = '/api/groups';
+  static const String health = '/health';
+
+  /// 获取完整的 API URL
+  static String getApiUrl(String path) {
+    return '$baseUrl$path';
+  }
+
+  /// 注册接口
+  static String get registerUrl => getApiUrl(authRegister);
+
+  /// 登录接口
+  static String get loginUrl => getApiUrl(authLogin);
+
+  /// 发送验证码接口
+  static String get sendVerifyCodeUrl => getApiUrl(authVerifyCodeSend);
+
+  /// 验证码登录接口
+  static String get verifyCodeLoginUrl => getApiUrl(authVerifyCodeLogin);
+
+  /// 忘记密码接口
+  static String get forgotPasswordUrl => getApiUrl(authForgotPassword);
+
+  /// 获取服务器配置接口
+  static String get serverConfigUrl => getApiUrl(configServer);
+
+  /// 健康检查接口
+  static String get healthUrl => getApiUrl(health);
+
+  // 默认头像配置
+  /// 默认群组头像URL
+  static const String defaultGroupAvatar = 'assets/images/default_group_avatar.png';
+  
+  /// 默认用户头像URL  
+  static const String defaultUserAvatar = 'assets/images/default_user_avatar.png';
+}

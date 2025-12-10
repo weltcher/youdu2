@@ -1,0 +1,36 @@
+# Git
+.git
+.gitignore
+
+# Documentation
+*.md
+!README.md
+
+# Test files
+*.http
+postman_collection.json
+
+# Build files
+*.exe
+youdu-server
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# Logs
+*.log
+
+# Environment (will copy .env.example instead)
+.env
+
+# Scripts
+*.bat
+*.sh
+
+# Database
+*.db
+*.sqlite
+

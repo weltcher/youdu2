@@ -1,0 +1,80 @@
+name: youdu
+description: "A new Flutter project."
+publish_to: 'none' # Remove this line if you wish to publish to pub.dev
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.9.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+
+  cupertino_icons: ^1.0.8
+  flutter_svg: ^2.0.10+1
+  http: ^1.1.2  # HTTP 请求库
+  shared_preferences: ^2.2.2  # 本地存储
+  flutter_secure_storage: ^9.2.2  # 安全存储（加密）
+  file_picker: ^8.0.0+1  # 文件选择器（支持图片选择）
+  web_socket_channel: ^2.4.0  # WebSocket 客户端
+  extended_text_field: ^16.0.2  # 富文本输入框，支持表情
+  extended_text: ^15.0.2  # 富文本显示，支持表情
+  screen_capturer: ^0.2.3  # 屏幕截图
+  pasteboard: ^0.2.0  # 剪贴板操作（用于截图后复制到剪贴板）
+  webview_windows: ^0.4.0  # Windows 桌面 WebView
+  webview_flutter: ^4.4.2  # 移动端 WebView
+  webview_flutter_web: ^0.2.2+4  # Web 平台 WebView
+  webview_flutter_android: ^3.16.0  # Android WebView
+  webview_flutter_wkwebview: ^3.13.0  # iOS WebView
+  path: ^1.9.0  # 路径操作
+  path_provider: ^2.1.1  # 获取应用目录
+  intl: ^0.20.2  # 国际化和日期格式化
+  window_manager: ^0.4.3  # 窗口管理（用于窗口缩放等）
+  # flutter_webrtc: ^0.11.7  # WebRTC 音视频通话（已移除，项目使用 Agora SDK）
+  permission_handler: ^11.3.1  # 权限请求（麦克风、摄像头等）
+  audioplayers: ^6.1.0  # 音频播放器
+  # 图片选择器（用于拍照功能）
+  image_picker: ^1.0.0
+  # URL启动器（用于打开链接）
+  url_launcher: ^6.1.0
+  mobile_scanner: ^5.2.3  # 二维码扫描（移动端）
+  qr_flutter: ^4.1.0  # 二维码生成
+  video_player: ^2.8.2  # Flutter官方视频播放器
+  chewie: ^1.7.4  # 基于video_player的视频播放UI组件
+  flutter_slidable: ^3.1.0  # 滑动操作组件
+  agora_rtc_engine:  # Agora 音视频通话 SDK
+    path: ./third/Agora-Flutter-SDK
+  sqflite: ^2.3.0  # SQLite 数据库（移动端）
+  sqflite_sqlcipher: ^2.2.1  # SQLite 加密数据库（移动端加密）
+  sqflite_common_ffi: ^2.3.0  # SQLite 数据库（桌面端）
+  sqlite3: ^2.3.0  # SQLite3 FFI（用于加载 SQLCipher）
+  sqlcipher_flutter_libs: ^0.6.0  # SQLCipher 跨平台支持（包含 Windows DLL 和 OpenSSL）
+  crypto: ^3.0.3  # 加密库（用于MD5、SHA256）
+  encrypt: ^5.0.3  # AES加密库（用于设备注册数据加密）
+  uuid: ^4.5.1  # UUID 生成器
+  flutter_local_notifications: ^17.2.3  # 本地通知（锁屏消息提醒）
+  cached_network_image: ^3.3.0  # 网络图片缓存
+  lpinyin: ^2.0.3  # 拼音转换库
+  gal: ^2.3.0  # 保存图片/视频到相册（替代 image_gallery_saver）
+  flutter_sound:
+    path: third/flutter_sound  # 使用本地版本，支持 Windows
+  dio: ^5.7.0  # HTTP 客户端（用于上传文件）
+  just_audio: ^0.9.40  # 音频播放（支持OPUS格式）
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+flutter:
+
+  uses-material-design: true
+
+  assets:
+    - assets/登录/
+    - assets/通讯录/
+    - assets/消息/emotion/
+    - assets/待办/
+    - assets/mp3/
+    - screenshot/
