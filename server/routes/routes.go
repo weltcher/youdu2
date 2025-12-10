@@ -36,6 +36,7 @@ func SetupRouter(hub *ws.Hub) *gin.Engine {
 	fileAssistantCtrl := controllers.NewFileAssistantController()
 	callCtrl := controllers.NewCallController(hub)
 	deviceCtrl := controllers.NewDeviceController()
+	appVersionCtrl := controllers.NewAppVersionController()
 
 	// API路由组
 	api := router.Group("/api")
@@ -64,6 +65,25 @@ func SetupRouter(hub *ws.Hub) *gin.Engine {
 		{
 			device.POST("/register", deviceCtrl.RegisterDevice) // 注册设备信息（首次启动）
 			device.GET("/stats", deviceCtrl.GetDeviceStats)     // 获取设备统计信息（管理用）
+		}
+
+		// 版本更新相关路由（客户端检查更新，不需要认证）
+		version := api.Group("/version")
+		{
+			version.GET("/check", appVersionCtrl.CheckUpdate)       // 检查更新
+			version.GET("/latest", appVersionCtrl.GetLatestVersion) // 获取最新版本
+		}
+
+		// 版本管理路由（管理后台使用）
+		appVersion := api.Group("/app-versions")
+		{
+			appVersion.POST("", appVersionCtrl.CreateVersion)              // 创建版本
+			appVersion.GET("", appVersionCtrl.ListVersions)                // 获取版本列表
+			appVersion.GET("/:id", appVersionCtrl.GetVersion)              // 获取版本详情
+			appVersion.PUT("/:id", appVersionCtrl.UpdateVersion)           // 更新版本信息
+			appVersion.POST("/:id/publish", appVersionCtrl.PublishVersion) // 发布版本
+			appVersion.POST("/:id/deprecate", appVersionCtrl.DeprecateVersion) // 废弃版本
+			appVersion.DELETE("/:id", appVersionCtrl.DeleteVersion)        // 删除版本
 		}
 
 		// 需要认证的路由
