@@ -543,3 +543,47 @@ func (ctrl *UserController) GetUserByInviteCode(c *gin.Context) {
 
 	utils.Success(c, user)
 }
+
+// CheckEmailAvailabilityRequest 检查邮箱可用性请求
+type CheckEmailAvailabilityRequest struct {
+	Email string `json:"email" binding:"required,email"`
+}
+
+// CheckEmailAvailability 检查邮箱是否已被其他用户绑定
+func (ctrl *UserController) CheckEmailAvailability(c *gin.Context) {
+	// 从上下文中获取当前用户ID（需要认证中间件）
+	currentUserID, exists := c.Get("user_id")
+	if !exists {
+		utils.Unauthorized(c, "未授权")
+		return
+	}
+
+	var req CheckEmailAvailabilityRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.BadRequest(c, "请求参数错误: "+err.Error())
+		return
+	}
+
+	// 查询邮箱是否已被使用
+	user, err := ctrl.userRepo.FindByEmail(req.Email)
+	if err != nil && err != sql.ErrNoRows {
+		utils.LogDebug("查询邮箱失败: %v", err)
+		utils.InternalServerError(c, "查询邮箱失败")
+		return
+	}
+
+	// 如果找到用户且不是当前用户，说明邮箱已被其他用户绑定
+	if user != nil && user.ID != currentUserID.(int) {
+		utils.Success(c, gin.H{
+			"available": false,
+			"message":   "该邮箱已被其他用户绑定",
+		})
+		return
+	}
+
+	// 邮箱可用
+	utils.Success(c, gin.H{
+		"available": true,
+		"message":   "邮箱可用",
+	})
+}

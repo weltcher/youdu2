@@ -128,8 +128,8 @@ func (ctrl *AuthController) Login(c *gin.Context) {
 		return
 	}
 
-	// 查找用户
-	user, err := ctrl.userRepo.FindByUsername(req.Username)
+	// 查找用户（支持用户名/手机号/邮箱登录）
+	user, err := ctrl.userRepo.FindByAccount(req.Username)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			utils.BadRequest(c, "用户名或密码错误")

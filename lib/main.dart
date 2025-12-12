@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:window_manager/window_manager.dart';
@@ -11,8 +12,30 @@ import 'services/local_database_service.dart';
 import 'services/notification_service.dart';
 import 'services/api_service.dart';
 
+/// HTTPS 证书信任配置（仅开发环境）
+/// ⚠️ 生产环境绝不要使用此配置！
+class MyHttpOverrides extends HttpOverrides {
+  @override
+  HttpClient createHttpClient(SecurityContext? context) {
+    return super.createHttpClient(context)
+      ..badCertificateCallback = (X509Certificate cert, String host, int port) {
+        // 仅在开发环境信任自签名证书
+        if (kDebugMode) {
+          logger.debug('🔓 开发环境：信任自签名证书 - $host:$port');
+          return true;
+        }
+        return false;
+      };
+  }
+}
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // 🔒 配置 HTTPS 证书信任（仅开发环境）
+  if (kDebugMode) {
+    HttpOverrides.global = MyHttpOverrides();
+  }
 
   // 初始化日志系统
   await logger.init();
@@ -65,6 +88,7 @@ void main() async {
       await windowManager.setResizable(true);
       await windowManager.setMinimumSize(const Size(800, 600));
       await windowManager.setSize(Size(windowWidth, windowHeight));
+      await windowManager.setTitle('有度'); // 设置窗口标题
       await windowManager.center();
       await windowManager.show();
       await windowManager.focus();

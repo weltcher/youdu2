@@ -241,6 +241,44 @@ class _MobileProfileEditPageState extends State<MobileProfileEditPage> {
       return;
     }
 
+    // 📧 如果邮箱有变化且不为空，检查邮箱是否已被其他用户绑定
+    if (email.isNotEmpty && email != widget.email) {
+      logger.debug('📧 检查邮箱是否已被绑定: $email');
+      try {
+        final result = await ApiService.checkEmailAvailability(
+          token: widget.token,
+          email: email,
+        );
+        
+        if (result['code'] == 0) {
+          final available = result['data']['available'] as bool;
+          if (!available) {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text(result['data']['message'] ?? '该邮箱已被其他用户绑定')),
+              );
+            }
+            return;
+          }
+        } else {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text(result['message'] ?? '邮箱验证失败')),
+            );
+          }
+          return;
+        }
+      } catch (e) {
+        logger.debug('❌ 检查邮箱失败: $e');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('邮箱验证失败: $e')),
+          );
+        }
+        return;
+      }
+    }
+
     setState(() {
       _isSaving = true;
     });

@@ -511,6 +511,32 @@ class ApiService {
     }
   }
 
+  /// 检查邮箱是否已被其他用户绑定
+  ///
+  /// 请求参数:
+  /// - token: 登录凭证 (必填)
+  /// - email: 邮箱地址 (必填)
+  ///
+  /// 返回:
+  /// - code: 0 表示成功
+  /// - message: 响应消息
+  /// - data: { available: true/false, message: "..." }
+  static Future<Map<String, dynamic>> checkEmailAvailability({
+    required String token,
+    required String email,
+  }) async {
+    try {
+      final response = await post(ApiConfig.userCheckEmail, {
+        'email': email,
+      }, token: token);
+      
+      return response;
+    } catch (e) {
+      logger.debug('❌ [API] 检查邮箱可用性失败: $e');
+      rethrow;
+    }
+  }
+
   // ============ 文件上传相关 API ============
 
   /// 上传图片到阿里云OSS
@@ -1087,7 +1113,8 @@ class ApiService {
   ///
   /// 请求参数:
   /// - token: 登录凭证 (必填)
-  /// - messageId: 消息ID (必填)
+  /// - messageId: 本地消息ID (必填，用于本地存储)
+  /// - serverMessageId: 服务器消息ID (可选，用于同步到服务器)
   /// - content: 消息内容 (必填)
   /// - messageType: 消息类型 (必填)
   /// - senderId: 发送者ID (必填)
@@ -1101,17 +1128,19 @@ class ApiService {
   static Future<Map<String, dynamic>> createFavorite({
     required String token,
     required int messageId,
+    int? serverMessageId,
     required String content,
     required String messageType,
     required int senderId,
     required String senderName,
     String? fileName,
   }) async {
-    logger.debug('📱 添加收藏（本地数据库）');
+    logger.debug('📱 添加收藏（本地数据库）- messageId: $messageId, serverMessageId: $serverMessageId');
     final favoriteService = FavoriteService();
     try {
       final id = await favoriteService.addFavorite(
         messageId: messageId,
+        serverMessageId: serverMessageId,
         content: content,
         messageType: messageType,
         fileName: fileName,
@@ -1191,24 +1220,30 @@ class ApiService {
     int page = 1,
     int pageSize = 20,
   }) async {
-    logger.debug('📱 从本地数据库获取收藏列表');
+    logger.debug('📱 从本地数据库获取收藏列表 - page: $page, pageSize: $pageSize');
     final favoriteService = FavoriteService();
     try {
       final favorites = await favoriteService.getFavorites(
         page: page,
         pageSize: pageSize,
       );
+      logger.debug('📱 FavoriteService返回 ${favorites.length} 条收藏');
+      
+      final favoritesJson = favorites.map((f) => f.toJson()).toList();
+      logger.debug('📱 转换为JSON后: ${favoritesJson.length} 条');
+      
       return {
         'code': 0,
         'message': '获取成功',
         'data': {
-          'favorites': favorites.map((f) => f.toJson()).toList(),
+          'favorites': favoritesJson,
           'total': favorites.length,
           'page': page,
           'page_size': pageSize,
         },
       };
     } catch (e) {
+      logger.debug('❌ 获取收藏列表失败: $e');
       return {'code': -1, 'message': '获取收藏列表失败: $e', 'data': null};
     }
   }
@@ -2345,6 +2380,170 @@ class ApiService {
     } catch (e) {
       logger.debug('❌ 设备注册加密失败: $e');
       rethrow;
+    }
+  }
+
+  // ============ 服务器收藏同步 API ============
+
+  /// 在服务器上创建收藏
+  ///
+  /// 请求参数:
+  /// - token: 登录凭证 (必填)
+  /// - messageId: 消息ID (可选，群组消息可能没有)
+  /// - content: 消息内容 (必填)
+  /// - messageType: 消息类型 (必填)
+  /// - fileName: 文件名 (可选)
+  /// - senderId: 发送者ID (必填)
+  /// - senderName: 发送者姓名 (必填)
+  ///
+  /// 返回:
+  /// - code: 0 表示成功
+  /// - message: 响应消息
+  /// - data: { id, user_id, content, ... }
+  static Future<Map<String, dynamic>> createFavoriteOnServer({
+    required String token,
+    int? messageId,
+    required String content,
+    required String messageType,
+    String? fileName,
+    required int senderId,
+    required String senderName,
+  }) async {
+    try {
+      // 如果有messageId，使用原有的基于消息ID的API
+      if (messageId != null) {
+        return await post(ApiConfig.favorites, {
+          'message_id': messageId,
+        }, token: token);
+      }
+      
+      // 如果没有messageId（如群组消息），使用直接创建的方式
+      // 注意：服务器端的CreateFavorite需要message_id，所以群组消息需要特殊处理
+      // 这里我们使用批量创建API的单条模式
+      return await post('${ApiConfig.favorites}/direct', {
+        'content': content,
+        'message_type': messageType,
+        'file_name': fileName,
+        'sender_id': senderId,
+        'sender_name': senderName,
+      }, token: token);
+    } catch (e) {
+      logger.debug('❌ 服务器创建收藏失败: $e');
+      return {'code': -1, 'message': '服务器创建收藏失败: $e', 'data': null};
+    }
+  }
+
+  /// 从服务器获取收藏列表
+  ///
+  /// 请求参数:
+  /// - token: 登录凭证 (必填)
+  /// - page: 页码 (可选，默认1)
+  /// - pageSize: 每页数量 (可选，默认100)
+  ///
+  /// 返回:
+  /// - code: 0 表示成功
+  /// - data: { favorites: [...], total: 0, page: 1, page_size: 100 }
+  static Future<Map<String, dynamic>> getFavoritesFromServer({
+    required String token,
+    int page = 1,
+    int pageSize = 100,
+  }) async {
+    try {
+      return await get(
+        '${ApiConfig.favorites}?page=$page&page_size=$pageSize',
+        token: token,
+      );
+    } catch (e) {
+      logger.debug('❌ 从服务器获取收藏列表失败: $e');
+      return {'code': -1, 'message': '获取服务器收藏列表失败: $e', 'data': null};
+    }
+  }
+
+  /// 从服务器删除收藏
+  ///
+  /// 请求参数:
+  /// - token: 登录凭证 (必填)
+  /// - favoriteId: 服务器端收藏ID (必填)
+  ///
+  /// 返回:
+  /// - code: 0 表示成功
+  /// - message: 响应消息
+  static Future<Map<String, dynamic>> deleteFavoriteOnServer({
+    required String token,
+    required int favoriteId,
+  }) async {
+    try {
+      final headers = {'Content-Type': 'application/json; charset=UTF-8'};
+      headers['Authorization'] = 'Bearer $token';
+
+      final response = await http.delete(
+        Uri.parse(ApiConfig.getApiUrl('${ApiConfig.favorites}/$favoriteId')),
+        headers: headers,
+      );
+      return _handleResponse(response);
+    } catch (e) {
+      logger.debug('❌ 从服务器删除收藏失败: $e');
+      return {'code': -1, 'message': '服务器删除收藏失败: $e', 'data': null};
+    }
+  }
+
+  // ============ 历史消息同步 API ============
+
+  /// 从服务器获取与指定联系人的消息历史（用于首次安装同步）
+  ///
+  /// 请求参数:
+  /// - token: 登录凭证 (必填)
+  /// - contactId: 联系人ID (必填)
+  /// - page: 页码 (可选，默认1)
+  /// - pageSize: 每页数量 (可选，默认100)
+  ///
+  /// 返回:
+  /// - code: 0 表示成功
+  /// - data: { messages: [...], total: 0, page: 1, page_size: 100 }
+  static Future<Map<String, dynamic>> getMessageHistoryFromServer({
+    required String token,
+    required int contactId,
+    int page = 1,
+    int pageSize = 100,
+  }) async {
+    try {
+      logger.debug('📥 [API] 从服务器获取与联系人 $contactId 的消息历史 - page: $page, pageSize: $pageSize');
+      return await get(
+        '${ApiConfig.messagesHistory}/$contactId?page=$page&page_size=$pageSize',
+        token: token,
+      );
+    } catch (e) {
+      logger.debug('❌ [API] 从服务器获取消息历史失败: $e');
+      return {'code': -1, 'message': '获取消息历史失败: $e', 'data': null};
+    }
+  }
+
+  /// 从服务器获取群聊历史消息（用于首次安装同步）
+  ///
+  /// 请求参数:
+  /// - token: 登录凭证 (必填)
+  /// - groupId: 群组ID (必填)
+  /// - page: 页码 (可选，默认1)
+  /// - pageSize: 每页数量 (可选，默认100)
+  ///
+  /// 返回:
+  /// - code: 0 表示成功
+  /// - data: { messages: [...], total: 0, page: 1, page_size: 100 }
+  static Future<Map<String, dynamic>> getGroupMessagesFromServer({
+    required String token,
+    required int groupId,
+    int page = 1,
+    int pageSize = 100,
+  }) async {
+    try {
+      logger.debug('📥 [API] 从服务器获取群组 $groupId 历史消息 - page: $page, pageSize: $pageSize');
+      return await get(
+        '${ApiConfig.groups}/$groupId/messages?page=$page&page_size=$pageSize',
+        token: token,
+      );
+    } catch (e) {
+      logger.debug('❌ [API] 从服务器获取群聊历史消息失败: $e');
+      return {'code': -1, 'message': '获取群聊历史消息失败: $e', 'data': null};
     }
   }
 }

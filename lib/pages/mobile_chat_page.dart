@@ -5683,9 +5683,19 @@ class _MobileChatPageState extends State<MobileChatPage>
     if (_token == null) return;
 
     try {
+      // 🔍 添加详细日志：打印消息的所有关键字段
+      logger.debug('⭐ [收藏消息] 准备收藏消息');
+      logger.debug('   - message.id (本地ID): ${message.id}');
+      logger.debug('   - message.serverId (服务器ID): ${message.serverId}');
+      logger.debug('   - message.senderId: ${message.senderId}');
+      logger.debug('   - message.receiverId: ${message.receiverId}');
+      logger.debug('   - message.messageType: ${message.messageType}');
+      logger.debug('   - message.content: ${message.content.substring(0, message.content.length > 50 ? 50 : message.content.length)}...');
+      
       final response = await ApiService.createFavorite(
         token: _token!,
         messageId: message.id,
+        serverMessageId: message.serverId,
         content: message.content,
         messageType: message.messageType,
         senderId: message.senderId,

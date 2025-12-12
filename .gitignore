@@ -54,3 +54,12 @@ third/
 .env
 server/.env
 server/example/.env
+
+# SSL/TLS certificates and keys
+*.pem
+*.crt
+*.key
+*.p12
+*.pfx
+server/certs/
+certs/

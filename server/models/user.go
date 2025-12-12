@@ -420,3 +420,44 @@ func (r *UserRepository) IsPhoneUsedByOthers(excludeUserID int, phone string) (b
 
 	return count > 0, nil
 }
+
+// FindByEmail 根据邮箱查找用户
+func (r *UserRepository) FindByEmail(email string) (*User, error) {
+	query := `
+		SELECT id, username, password, phone, email, avatar, auth_code, full_name, gender, 
+		       work_signature, status, landline, short_number, department, position, region,
+		       invite_code, invited_by_code, created_at, updated_at
+		FROM users
+		WHERE email = $1
+	`
+
+	user := &User{}
+	err := r.DB.QueryRow(query, email).Scan(
+		&user.ID,
+		&user.Username,
+		&user.Password,
+		&user.Phone,
+		&user.Email,
+		&user.Avatar,
+		&user.AuthCode,
+		&user.FullName,
+		&user.Gender,
+		&user.WorkSignature,
+		&user.Status,
+		&user.Landline,
+		&user.ShortNumber,
+		&user.Department,
+		&user.Position,
+		&user.Region,
+		&user.InviteCode,
+		&user.InvitedByCode,
+		&user.CreatedAt,
+		&user.UpdatedAt,
+	)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return user, nil
+}

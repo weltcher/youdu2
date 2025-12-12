@@ -73,23 +73,43 @@ func main() {
 	// 设置WebSocket路由（独立端口）
 	wsRouter := routes.SetupWebSocketRouter(hub)
 
-	// 启动HTTP API服务器
+	// 启动HTTP/HTTPS API服务器
 	serverAddr := config.AppConfig.ServerHost + ":" + config.AppConfig.ServerPort
-	utils.LogInfo("🚀 HTTP API服务器启动在 http://%s", serverAddr)
-
-	// 启动WebSocket服务器（独立端口）
 	wsAddr := config.AppConfig.WSHost + ":" + config.AppConfig.WSPort
-	utils.LogInfo("🚀 WebSocket服务器启动在 ws://%s", wsAddr)
 
-	// 在单独的goroutine中启动WebSocket服务器
-	go func() {
-		if err := wsRouter.Run(wsAddr); err != nil {
-			utils.LogFatal("WebSocket服务器启动失败: %v", err)
+	if config.AppConfig.EnableHTTPS {
+		// HTTPS模式
+		utils.LogInfo("🚀 HTTPS API服务器启动在 https://%s", serverAddr)
+		utils.LogInfo("🚀 WSS服务器启动在 wss://%s", wsAddr)
+		utils.LogInfo("📜 证书文件: %s", config.AppConfig.CertFile)
+		utils.LogInfo("🔑 密钥文件: %s", config.AppConfig.KeyFile)
+
+		// 在单独的goroutine中启动WSS服务器
+		go func() {
+			if err := wsRouter.RunTLS(wsAddr, config.AppConfig.CertFile, config.AppConfig.KeyFile); err != nil {
+				utils.LogFatal("WSS服务器启动失败: %v", err)
+			}
+		}()
+
+		// 启动HTTPS API服务器（主线程）
+		if err := apiRouter.RunTLS(serverAddr, config.AppConfig.CertFile, config.AppConfig.KeyFile); err != nil {
+			utils.LogFatal("HTTPS API服务器启动失败: %v", err)
 		}
-	}()
+	} else {
+		// HTTP模式
+		utils.LogInfo("🚀 HTTP API服务器启动在 http://%s", serverAddr)
+		utils.LogInfo("🚀 WebSocket服务器启动在 ws://%s", wsAddr)
 
-	// 启动HTTP API服务器（主线程）
-	if err := apiRouter.Run(serverAddr); err != nil {
-		utils.LogFatal("HTTP API服务器启动失败: %v", err)
+		// 在单独的goroutine中启动WebSocket服务器
+		go func() {
+			if err := wsRouter.Run(wsAddr); err != nil {
+				utils.LogFatal("WebSocket服务器启动失败: %v", err)
+			}
+		}()
+
+		// 启动HTTP API服务器（主线程）
+		if err := apiRouter.Run(serverAddr); err != nil {
+			utils.LogFatal("HTTP API服务器启动失败: %v", err)
+		}
 	}
 }

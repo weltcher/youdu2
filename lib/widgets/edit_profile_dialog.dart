@@ -699,10 +699,50 @@ class _EditProfileDialogState extends State<EditProfileDialog> {
   }
 
   // 保存处理
-  void _handleSave() {
+  Future<void> _handleSave() async {
     logger.debug('💾 准备保存用户资料...');
     logger.debug('   当前头像URL: $_avatarUrl');
     logger.debug('   原始头像URL: ${widget.avatar}');
+
+    final email = _emailController.text.trim();
+    
+    // 如果邮箱有变化且不为空，检查邮箱是否已被其他用户绑定
+    if (email.isNotEmpty && email != widget.email) {
+      logger.debug('📧 检查邮箱是否已被绑定: $email');
+      try {
+        final result = await ApiService.checkEmailAvailability(
+          token: widget.token,
+          email: email,
+        );
+        
+        if (result['code'] == 0) {
+          final available = result['data']['available'] as bool;
+          if (!available) {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text(result['data']['message'] ?? '该邮箱已被其他用户绑定')),
+              );
+            }
+            return;
+          }
+        } else {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text(result['message'] ?? '邮箱验证失败')),
+            );
+          }
+          return;
+        }
+      } catch (e) {
+        logger.debug('❌ 检查邮箱失败: $e');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('邮箱验证失败: $e')),
+          );
+        }
+        return;
+      }
+    }
 
     final data = {
       'full_name': _fullNameController.text.trim(),
@@ -710,7 +750,7 @@ class _EditProfileDialogState extends State<EditProfileDialog> {
       'phone': _phoneController.text.trim(),
       'landline': _landlineController.text.trim(),
       'short_number': _shortNumberController.text.trim(),
-      'email': _emailController.text.trim(),
+      'email': email,
       'department': _departmentController.text.trim(),
       'position': _positionController.text.trim(),
       'region': _regionController.text.trim(),

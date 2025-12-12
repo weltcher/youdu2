@@ -25,6 +25,11 @@ type Config struct {
 	WSPort string
 	WSHost string
 
+	// HTTPS/TLS
+	EnableHTTPS bool
+	CertFile    string
+	KeyFile     string
+
 	// JWT
 	JWTSecret string
 
@@ -64,6 +69,20 @@ func LoadConfig() {
 	verifyExpire, _ := strconv.Atoi(getEnvViper("VERIFY_CODE_EXPIRE_MINUTES", "5"))
 	redisDB, _ := strconv.Atoi(getEnvViper("REDIS_DB", "0"))
 
+	// 获取应用环境
+	appEnv := getEnvViper("APP_ENV", "development")
+	
+	// Debug模式（development）下默认使用HTTP，生产环境默认使用HTTPS
+	// 可以通过ENABLE_HTTPS环境变量显式覆盖
+	enableHTTPS := getEnvViper("ENABLE_HTTPS", "false") == "true"
+	if appEnv == "development" || appEnv == "debug" {
+		// Debug模式下，除非显式设置ENABLE_HTTPS=true，否则使用HTTP
+		enableHTTPS = getEnvViper("ENABLE_HTTPS", "false") == "true"
+	} else {
+		// 生产环境下，除非显式设置ENABLE_HTTPS=false，否则使用HTTPS
+		enableHTTPS = getEnvViper("ENABLE_HTTPS", "true") == "true"
+	}
+
 	AppConfig = &Config{
 		DBHost:                  getEnvViper("DB_HOST", "127.0.0.1"),
 		DBPort:                  getEnvViper("DB_PORT", "5432"),
@@ -75,9 +94,12 @@ func LoadConfig() {
 		ServerHost:              getEnvViper("SERVER_HOST", "0.0.0.0"),
 		WSPort:                  getEnvViper("WS_PORT", "8081"),
 		WSHost:                  getEnvViper("WS_HOST", "0.0.0.0"),
+		EnableHTTPS:             enableHTTPS,
+		CertFile:                getEnvViper("CERT_FILE", "certs/server.crt"),
+		KeyFile:                 getEnvViper("KEY_FILE", "certs/server.key"),
 		JWTSecret:               getEnvViper("JWT_SECRET", "your_jwt_secret_key"),
 		VerifyCodeExpireMinutes: verifyExpire,
-		AppEnv:                  getEnvViper("APP_ENV", "development"),
+		AppEnv:                  appEnv,
 		AgoraAppID:              getEnvViper("AGORA_APP_ID", ""),
 		AgoraAppCertificate:     getEnvViper("AGORA_APP_CERTIFICATE", ""),
 		RedisHost:               getEnvViper("REDIS_HOST", "127.0.0.1"),

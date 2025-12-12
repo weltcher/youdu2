@@ -42,7 +42,7 @@ class AppLocalizations {
       'auto_login_next_time': '下次自动登录',
 
       // 主页
-      'chat': '会话',
+      'chat': '会话1',
       'contacts': '通讯录',
       'news': '资讯',
       'todo': '待办',
@@ -212,7 +212,7 @@ class AppLocalizations {
     // 英文
     'en_US': {
       // 登录页面
-      'app_title': 'Youdu',
+      'app_title': '有度',
       'login': 'Login',
       'register': 'Register',
       'forgot_password': 'Forgot Password',

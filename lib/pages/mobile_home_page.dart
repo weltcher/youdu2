@@ -15,6 +15,7 @@ import '../services/agora_service.dart';
 import '../services/local_database_service.dart';
 import '../services/notification_service.dart';
 import '../services/native_call_service.dart';
+import '../services/app_initialization_service.dart';
 import '../config/feature_config.dart';
 import '../config/api_config.dart';
 import '../utils/storage.dart';
@@ -97,6 +98,10 @@ class _MobileHomePageState extends State<MobileHomePage>
   // 🔴 网络连接状态
   bool _isConnecting = false; // 是否正在连接网络
   bool _isNetworkConnected = false; // 网络是否已连接
+  
+  // 首次同步数据状态
+  bool _isSyncingData = false; // 是否正在同步数据
+  String? _syncStatusMessage; // 同步状态消息
   Timer? _networkStatusTimer; // 网络状态监听定时器
 
   // 聊天列表页面的 GlobalKey
@@ -400,6 +405,22 @@ class _MobileHomePageState extends State<MobileHomePage>
 
     // 加载用户信息
     await _loadUserInfo();
+
+    // 🔴 执行应用初始化（首次安装时同步历史消息和收藏数据）
+    logger.debug('🚀 MobileHomePage _initializeData - 开始执行应用初始化服务');
+    await AppInitializationService().initialize(
+      onSyncStatusChanged: (isSyncing, message) {
+        if (mounted) {
+          setState(() {
+            _isSyncingData = isSyncing;
+            _syncStatusMessage = message;
+          });
+          // 通知聊天列表页面更新同步状态
+          _chatListKey.currentState?.updateSyncStatus(isSyncing, message);
+        }
+      },
+    );
+    logger.debug('✅ MobileHomePage _initializeData - 应用初始化服务完成');
 
     // 🔴 检查并显示全屏权限设置页面
     await _checkAndShowFullScreenPermissionSettings();
@@ -3482,6 +3503,26 @@ class _MobileChatListPageState extends State<MobileChatListPage> {
   bool _isLoading = false; // 🔴 不显示加载动画，直接根据数据状态展示
   bool _isFirstLoad = true; // 🔴 新增：标记是否首次加载
   String? _error;
+  
+  // 首次同步数据状态
+  bool _isSyncingData = false; // 是否正在同步数据
+  String? _syncStatusMessage; // 同步状态消息
+  
+  /// 更新同步状态（供父组件调用）
+  void updateSyncStatus(bool isSyncing, String? message) {
+    if (mounted) {
+      setState(() {
+        _isSyncingData = isSyncing;
+        _syncStatusMessage = message;
+      });
+      
+      // 🔴 同步完成后刷新聊天列表
+      if (!isSyncing && message == null) {
+        logger.debug('✅ [同步完成] 刷新最近联系人列表');
+        refresh();
+      }
+    }
+  }
   final TextEditingController _searchController = TextEditingController();
   String _searchText = '';
   final WebSocketService _wsService = WebSocketService();
@@ -4219,7 +4260,29 @@ class _MobileChatListPageState extends State<MobileChatListPage> {
                   )
                 : _filteredContacts.isEmpty
                 // 🔴 关键修改：只有在首次加载完成后，且列表为空时，才显示空状态页面
-                ? (_isFirstLoad
+                ? (_isSyncingData
+                    // 首次同步数据时显示加载状态
+                    ? Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const SizedBox(
+                              width: 32,
+                              height: 32,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 3,
+                                valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF07C160)),
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                            Text(
+                              _syncStatusMessage ?? '同步数据中...',
+                              style: const TextStyle(fontSize: 14, color: Color(0xFF999999)),
+                            ),
+                          ],
+                        ),
+                      )
+                    : _isFirstLoad
                     ? const SizedBox.shrink() // 首次加载中，不显示任何内容
                     : Center(
                         child: Column(

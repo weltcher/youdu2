@@ -29,6 +29,7 @@ import '../services/websocket_service.dart';
 import '../services/video_upload_service.dart';
 import '../services/message_service.dart';
 import '../services/local_database_service.dart';
+import '../services/app_initialization_service.dart';
 import '../config/feature_config.dart';
 import '../constants/upload_limits.dart';
 import '../utils/storage.dart';
@@ -154,6 +155,10 @@ class _DesktopHomePageState extends State<DesktopHomePage> with WindowListener {
   List<RecentContactModel> _recentContacts = []; // 最近联系人列表
   bool _isLoadingRecentContacts = false; // 是否正在加载最近联系人
   String? _recentContactsError; // 最近联系人加载错误信息
+  
+  // 首次同步数据状态
+  bool _isSyncingData = false; // 是否正在同步数据
+  String? _syncStatusMessage; // 同步状态消息
   final TextEditingController _searchController =
       TextEditingController(); // 搜索框控制器
   String _searchText = ''; // 当前搜索文本
@@ -368,6 +373,26 @@ class _DesktopHomePageState extends State<DesktopHomePage> with WindowListener {
         await logger.init(userId: _currentUserId.toString());
         logger.info('📝 日志系统已重新初始化，用户ID: $_currentUserId');
       }
+
+      // 3.5. 🔴 执行应用初始化（首次安装时同步历史消息和收藏数据）
+      logger.debug('🚀 HomePage _initialize - 开始执行应用初始化服务');
+      await AppInitializationService().initialize(
+        onSyncStatusChanged: (isSyncing, message) {
+          if (mounted) {
+            setState(() {
+              _isSyncingData = isSyncing;
+              _syncStatusMessage = message;
+            });
+            
+            // 🔴 同步完成后刷新最近联系人列表
+            if (!isSyncing && message == null) {
+              logger.debug('✅ [同步完成] 刷新最近联系人列表');
+              _loadRecentContacts();
+            }
+          }
+        },
+      );
+      logger.debug('✅ HomePage _initialize - 应用初始化服务完成');
 
       // 4. 初始化WebSocket连接
       await _initWebSocket();
@@ -4784,6 +4809,7 @@ class _DesktopHomePageState extends State<DesktopHomePage> with WindowListener {
       final response = await ApiService.createFavorite(
         token: token,
         messageId: message.id,
+        serverMessageId: message.serverId,
         content: message.content,
         messageType: message.messageType,
         senderId: message.senderId,
@@ -13880,6 +13906,30 @@ class _DesktopHomePageState extends State<DesktopHomePage> with WindowListener {
                 foregroundColor: Colors.white,
               ),
               child: const Text('重试'),
+            ),
+          ],
+        ),
+      );
+    }
+
+    // 首次同步数据时显示加载状态
+    if (_isSyncingData) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const SizedBox(
+              width: 32,
+              height: 32,
+              child: CircularProgressIndicator(
+                strokeWidth: 3,
+                valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF07C160)),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              _syncStatusMessage ?? '同步数据中...',
+              style: const TextStyle(fontSize: 14, color: Color(0xFF999999)),
             ),
           ],
         ),

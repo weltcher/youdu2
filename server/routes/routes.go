@@ -70,8 +70,9 @@ func SetupRouter(hub *ws.Hub) *gin.Engine {
 		// 版本更新相关路由（客户端检查更新，不需要认证）
 		version := api.Group("/version")
 		{
-			version.GET("/check", appVersionCtrl.CheckUpdate)       // 检查更新
-			version.GET("/latest", appVersionCtrl.GetLatestVersion) // 获取最新版本
+			version.GET("/check", appVersionCtrl.CheckUpdate)                      // 检查更新
+			version.GET("/latest", appVersionCtrl.GetLatestVersion)                // 获取指定平台最新版本
+			version.GET("/all-platforms", appVersionCtrl.GetAllPlatformLatestVersions) // 获取所有平台最新版本
 		}
 
 		// 版本管理路由（管理后台使用）
@@ -118,6 +119,7 @@ func SetupRouter(hub *ws.Hub) *gin.Engine {
 				user.PUT("/work-signature", userCtrl.UpdateWorkSignature)        // 更新工作签名
 				user.PUT("/status", userCtrl.UpdateStatus)                       // 更新状态
 				user.POST("/change-password", userCtrl.ChangePassword)           // 修改密码
+				user.POST("/check-email", userCtrl.CheckEmailAvailability)       // 检查邮箱是否已被其他用户绑定
 				user.POST("/batch-online-status", userCtrl.BatchGetOnlineStatus) // 批量获取用户在线状态
 				user.GET("/:id", userCtrl.GetUserByID)                           // 根据ID查询用户信息（动态路由放最后）
 			}
@@ -154,10 +156,11 @@ func SetupRouter(hub *ws.Hub) *gin.Engine {
 			// 收藏相关路由
 			favorite := authorized.Group("/favorites")
 			{
-				favorite.POST("/batch", favoriteCtrl.CreateBatchFavorite) // 批量创建收藏（合并模式）- 必须在通用路由之前
-				favorite.POST("", favoriteCtrl.CreateFavorite)            // 创建收藏
-				favorite.GET("", favoriteCtrl.GetFavorites)               // 获取收藏列表（分页）
-				favorite.DELETE("/:id", favoriteCtrl.DeleteFavorite)      // 删除收藏
+				favorite.POST("/batch", favoriteCtrl.CreateBatchFavorite)   // 批量创建收藏（合并模式）- 必须在通用路由之前
+				favorite.POST("/direct", favoriteCtrl.CreateDirectFavorite) // 直接创建收藏（不需要message_id）
+				favorite.POST("", favoriteCtrl.CreateFavorite)              // 创建收藏
+				favorite.GET("", favoriteCtrl.GetFavorites)                 // 获取收藏列表（分页）
+				favorite.DELETE("/:id", favoriteCtrl.DeleteFavorite)        // 删除收藏
 			}
 
 			// 常用联系人相关路由

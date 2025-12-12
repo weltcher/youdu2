@@ -29,7 +29,6 @@ class _LoginPageState extends State<LoginPage> {
   bool _rememberPassword = false;
   bool _autoLogin = false;
   bool _obscurePassword = true;
-  int _selectedTabIndex = 0; // 0: 账号登录, 1: 验证码登录
   String _selectedLanguage = '简体中文'; // 当前选择的语言
   bool _canLogin = false;
   bool _isLoading = false; // 登录加载状态
@@ -37,6 +36,9 @@ class _LoginPageState extends State<LoginPage> {
   // 验证码倒计时相关
   int _countdown = 0;
   bool _isCountingDown = false;
+
+  // 登录方式选择：0=账号登录，1=验证码登录
+  int _selectedTabIndex = 0;
 
   // 检测是否是PC端
   bool get _isDesktop => Platform.isWindows || Platform.isMacOS || Platform.isLinux;
@@ -55,8 +57,6 @@ class _LoginPageState extends State<LoginPage> {
     super.initState();
     _accountController.addListener(_checkCanLogin);
     _passwordController.addListener(_checkCanLogin);
-    _phoneController.addListener(_checkCanLogin);
-    _verifyCodeController.addListener(_checkCanLogin);
 
     // 加载保存的登录信息
     _loadSavedCredentials();
@@ -134,17 +134,10 @@ class _LoginPageState extends State<LoginPage> {
 
   void _checkCanLogin() {
     setState(() {
-      if (_selectedTabIndex == 0) {
-        // 账号登录：账号和密码都有内容
-        _canLogin =
-            _accountController.text.trim().isNotEmpty &&
-            _passwordController.text.trim().isNotEmpty;
-      } else {
-        // 验证码登录：手机号和验证码都有内容
-        _canLogin =
-            _phoneController.text.trim().isNotEmpty &&
-            _verifyCodeController.text.trim().isNotEmpty;
-      }
+      // 账号登录：账号和密码都有内容
+      _canLogin =
+          _accountController.text.trim().isNotEmpty &&
+          _passwordController.text.trim().isNotEmpty;
     });
   }
 
@@ -484,8 +477,6 @@ class _LoginPageState extends State<LoginPage> {
   void dispose() {
     _accountController.removeListener(_checkCanLogin);
     _passwordController.removeListener(_checkCanLogin);
-    _phoneController.removeListener(_checkCanLogin);
-    _verifyCodeController.removeListener(_checkCanLogin);
     _accountController.dispose();
     _passwordController.dispose();
     _phoneController.dispose();
@@ -553,18 +544,10 @@ class _LoginPageState extends State<LoginPage> {
                 ],
               ),
             ),
-            // Tab栏
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 30),
-              child: _buildTabBar(),
-            ),
-            const SizedBox(height: 30),
             // 表单内容
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 30),
-              child: _selectedTabIndex == 0
-                  ? _buildAccountLoginForm()
-                  : _buildVerifyCodeLoginForm(),
+              child: _buildAccountLoginForm(),
             ),
           ],
         ),
@@ -578,11 +561,12 @@ class _LoginPageState extends State<LoginPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // 账号输入框
+        const SizedBox(height: 30),
+        // 账号输入框（支持用户名或邮箱）
         _buildInputField(
           label: l10n.translate('account'),
           controller: _accountController,
-          hintText: l10n.translate('account'),
+          hintText: '请输入用户名/手机号/邮箱',
         ),
         const SizedBox(height: 20),
         // 密码输入框

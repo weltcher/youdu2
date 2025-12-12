@@ -1187,8 +1187,11 @@ class WebSocketService {
     Map<String, dynamic> messageData,
   ) async {
     logger.debug('📝 [_insertPrivateMessageToLocal] 开始处理消息');
+    logger.debug('   - messageData[\'id\']: ${messageData['id']}');
     logger.debug('   - message_type: ${messageData['message_type']}');
     logger.debug('   - voice_duration: ${messageData['voice_duration']}');
+    logger.debug('   - sender_id: ${messageData['sender_id']}');
+    logger.debug('   - receiver_id: ${messageData['receiver_id']}');
     
     // 处理is_read字段：既要兼容旧数据的整数，又要处理新的布尔值
     final isReadValue = messageData['is_read'];

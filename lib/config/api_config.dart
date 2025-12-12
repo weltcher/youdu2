@@ -3,12 +3,17 @@ import 'package:flutter/foundation.dart';
 /// API 配置类
 class ApiConfig {
   // 默认服务器配置
-  // 🔥 自动根据debug/release模式切换服务器地址
-  // Debug模式: 使用本地服务器 192.168.1.6
-  // Release模式: 使用生产服务器 31.57.65.73
-  static final String defaultHost = kDebugMode ? '192.168.1.6' : '31.57.65.73';
+  // 🔥 自动根据debug/release模式切换服务器地址和协议
+  // Debug模式: 使用本地服务器 192.168.1.6 (HTTP 8080/8081)
+  // Release模式: 使用生产服务器 www.xn--wxtp0q.com (HTTPS 8080/8081)
+  static final String defaultHost = kDebugMode ? '192.168.1.6' : 'www.xn--wxtp0q.com';
+  
+  // 端口配置：统一使用 8080/8081
   static const String defaultPort = '8080';
-  static const String defaultWSPort = '8081'; // WebSocket端口
+  static const String defaultWSPort = '8081';
+  
+  // HTTPS 配置：仅生产环境启用HTTPS，开发环境使用HTTP
+  static final bool useHttps = !kDebugMode;
 
   // 当前服务器配置（可以被用户修改）
   static String _currentHost = defaultHost;
@@ -24,11 +29,17 @@ class ApiConfig {
   /// 获取当前WebSocket端口
   static String get wsPort => _currentWSPort;
 
+  /// 获取协议前缀（http 或 https）
+  static String get protocol => useHttps ? 'https' : 'http';
+
+  /// 获取 WebSocket 协议前缀（ws 或 wss）
+  static String get wsProtocol => useHttps ? 'wss' : 'ws';
+
   /// 获取完整的 base URL
-  static String get baseUrl => 'http://$_currentHost:$_currentPort';
+  static String get baseUrl => '$protocol://$_currentHost:$_currentPort';
 
   /// 获取完整的 WebSocket URL
-  static String get wsBaseUrl => 'ws://$_currentHost:$_currentWSPort';
+  static String get wsBaseUrl => '$wsProtocol://$_currentHost:$_currentWSPort';
 
   /// 设置服务器地址
   static void setServer(String host, String port, {String? wsPort}) {
@@ -58,6 +69,7 @@ class ApiConfig {
   static const String userWorkSignature = '/api/user/work-signature';
   static const String userStatus = '/api/user/status';
   static const String userChangePassword = '/api/user/change-password';
+  static const String userCheckEmail = '/api/user/check-email';
   static const String uploadImage = '/api/upload/image';
   static const String uploadFile = '/api/upload/file';
   static const String uploadAvatar = '/api/upload/avatar';

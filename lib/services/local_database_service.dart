@@ -44,7 +44,7 @@ class LocalDatabaseService {
   
   // 🔥 测试开关：是否在移动端启动时删除重建数据库
   // ⚠️  警告：开启后每次启动都会清空所有数据！仅用于测试！
-  static const bool _forceRecreateDatabase = true; // 设为 false 可禁用此功能
+  static const bool _forceRecreateDatabase = false; // 设为 false 可禁用此功能
 
   /// 获取数据库实例（懒加载）
   /// 移动端返回 sqflite Database，桌面端返回 sqlite3 Database
@@ -507,6 +507,10 @@ class LocalDatabaseService {
       if (!dbExists) {
         logger.debug('📝 创建新数据库表结构...');
         _createDesktopDatabaseTables(_sqlite3Db!);
+      } else {
+        // 已存在的数据库，执行升级检查
+        logger.debug('📝 检查桌面端数据库升级...');
+        _upgradeDesktopDatabase(_sqlite3Db!);
       }
       
       // 创建桌面端Provider
@@ -517,6 +521,34 @@ class LocalDatabaseService {
     } catch (e) {
       logger.debug('❌ 初始化桌面端数据库失败: $e');
       rethrow;
+    }
+  }
+  
+  /// 桌面端数据库升级
+  void _upgradeDesktopDatabase(sqlite3.Database db) {
+    try {
+      // 检查 group_messages 表是否有 file_size 字段
+      final columns = db.select("PRAGMA table_info(group_messages)");
+      final columnNames = columns.map((row) => row['name'] as String).toSet();
+      
+      // 添加缺失的字段
+      if (!columnNames.contains('file_size')) {
+        logger.debug('📝 [桌面端升级] 添加 group_messages.file_size 字段');
+        db.execute('ALTER TABLE group_messages ADD COLUMN file_size INTEGER');
+      }
+      if (!columnNames.contains('is_read')) {
+        logger.debug('📝 [桌面端升级] 添加 group_messages.is_read 字段');
+        db.execute('ALTER TABLE group_messages ADD COLUMN is_read BOOLEAN DEFAULT 0');
+      }
+      if (!columnNames.contains('is_recalled')) {
+        logger.debug('📝 [桌面端升级] 添加 group_messages.is_recalled 字段');
+        db.execute('ALTER TABLE group_messages ADD COLUMN is_recalled BOOLEAN DEFAULT 0');
+      }
+      
+      logger.debug('✅ 桌面端数据库升级检查完成');
+    } catch (e) {
+      logger.debug('⚠️ 桌面端数据库升级失败: $e');
+      // 升级失败不阻止应用启动
     }
   }
 
@@ -565,6 +597,9 @@ class LocalDatabaseService {
         content TEXT NOT NULL,
         message_type VARCHAR(20) DEFAULT 'text',
         file_name VARCHAR(255),
+        file_size INTEGER,
+        is_read BOOLEAN DEFAULT 0,
+        is_recalled BOOLEAN DEFAULT 0,
         quoted_message_id INTEGER,
         quoted_message_content TEXT,
         status VARCHAR(20) DEFAULT 'normal',
@@ -594,6 +629,7 @@ class LocalDatabaseService {
     db.execute('''
       CREATE TABLE favorites (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        server_id INTEGER,
         user_id INTEGER NOT NULL,
         message_id INTEGER,
         content TEXT NOT NULL,
@@ -601,7 +637,8 @@ class LocalDatabaseService {
         file_name VARCHAR(255),
         sender_id INTEGER NOT NULL,
         sender_name VARCHAR(100) NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        sync_status VARCHAR(20) DEFAULT 'synced'
       )
     ''');
 
@@ -786,7 +823,7 @@ class LocalDatabaseService {
           var db = await sqflite_cipher.openDatabase(
             path,
             password: databaseKey, // 🔐 设置数据库密码（复杂密钥）
-            version: 5, // 🔴 升级到版本5（添加voice_duration字段）
+            version: 7, // 🔴 升级到版本7（添加group_messages表的file_size、is_read、is_recalled字段）
             onCreate: _createDatabase,
             onUpgrade: _upgradeDatabase,
           );
@@ -870,6 +907,9 @@ class LocalDatabaseService {
         content TEXT NOT NULL,
         message_type VARCHAR(20) DEFAULT 'text',
         file_name VARCHAR(255),
+        file_size INTEGER,
+        is_read BOOLEAN DEFAULT 0,
+        is_recalled BOOLEAN DEFAULT 0,
         quoted_message_id INTEGER,
         quoted_message_content TEXT,
         status VARCHAR(20) DEFAULT 'normal',
@@ -899,6 +939,7 @@ class LocalDatabaseService {
     await db.execute('''
       CREATE TABLE favorites (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        server_id INTEGER,
         user_id INTEGER NOT NULL,
         message_id INTEGER,
         content TEXT NOT NULL,
@@ -906,7 +947,8 @@ class LocalDatabaseService {
         file_name VARCHAR(255),
         sender_id INTEGER NOT NULL,
         sender_name VARCHAR(100) NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        sync_status VARCHAR(20) DEFAULT 'synced'
       )
     ''');
 
@@ -1072,10 +1114,80 @@ class LocalDatabaseService {
         rethrow;
       }
     }
+
+    // 版本5 -> 版本6: 添加favorites表的server_id和sync_status字段（收藏同步）
+    if (oldVersion < 6) {
+      logger.debug('执行数据库升级: 添加favorites表的server_id和sync_status字段');
+      try {
+        await db.execute('ALTER TABLE favorites ADD COLUMN server_id INTEGER');
+        await db.execute("ALTER TABLE favorites ADD COLUMN sync_status VARCHAR(20) DEFAULT 'synced'");
+        logger.debug('✅ 数据库升级完成: server_id和sync_status字段已添加');
+      } catch (e) {
+        logger.error('❌ 数据库升级失败: $e');
+        rethrow;
+      }
+    }
+
+    // 版本6 -> 版本7: 添加group_messages表的file_size、is_read、is_recalled字段
+    if (oldVersion < 7) {
+      logger.debug('执行数据库升级: 添加group_messages表的file_size、is_read、is_recalled字段');
+      try {
+        await db.execute('ALTER TABLE group_messages ADD COLUMN file_size INTEGER');
+        await db.execute('ALTER TABLE group_messages ADD COLUMN is_read BOOLEAN DEFAULT 0');
+        await db.execute('ALTER TABLE group_messages ADD COLUMN is_recalled BOOLEAN DEFAULT 0');
+        logger.debug('✅ 数据库升级完成: file_size、is_read、is_recalled字段已添加');
+      } catch (e) {
+        logger.error('❌ 数据库升级失败: $e');
+        rethrow;
+      }
+    }
   }
 
 
   // ============ 私聊消息操作 ============
+
+  /// 检查是否有任何消息（用于判断是否首次安装）
+  Future<bool> hasAnyMessages(int userId) async {
+    try {
+      // 检查私聊消息
+      final privateMessages = await _executeRawQuery('''
+        SELECT COUNT(*) as count FROM messages 
+        WHERE sender_id = ? OR receiver_id = ?
+        LIMIT 1
+      ''', [userId, userId]);
+      
+      final privateCount = privateMessages.isNotEmpty 
+          ? (privateMessages.first['count'] as int? ?? 0) 
+          : 0;
+      
+      if (privateCount > 0) {
+        logger.debug('📊 [hasAnyMessages] 发现私聊消息: $privateCount 条');
+        return true;
+      }
+      
+      // 检查群聊消息
+      final groupMessages = await _executeRawQuery('''
+        SELECT COUNT(*) as count FROM group_messages 
+        WHERE sender_id = ?
+        LIMIT 1
+      ''', [userId]);
+      
+      final groupCount = groupMessages.isNotEmpty 
+          ? (groupMessages.first['count'] as int? ?? 0) 
+          : 0;
+      
+      if (groupCount > 0) {
+        logger.debug('📊 [hasAnyMessages] 发现群聊消息: $groupCount 条');
+        return true;
+      }
+      
+      logger.debug('📊 [hasAnyMessages] 本地数据库为空，没有任何消息');
+      return false;
+    } catch (e) {
+      logger.debug('❌ [hasAnyMessages] 检查消息失败: $e');
+      return false;
+    }
+  }
 
   /// 插入私聊消息
   /// [orIgnore] 如果为true，遇到重复ID时忽略插入（用于离线消息去重）
@@ -1241,201 +1353,129 @@ class LocalDatabaseService {
   /// 合并私聊消息和群聊消息，返回每个联系人/群组的最后一条消息
   Future<List<Map<String, dynamic>>> getRecentContacts(int userId) async {
     try {
-      // 使用CTE合并私聊、群聊和文件传输助手消息，使用MAX(id)获取最新消息
-      // 注意：过滤条件必须与getMessages()、getGroupMessages()和getFileAssistantMessages()完全一致
-      final results = await _executeRawQuery(
+      final allContacts = <Map<String, dynamic>>[];
+      
+      // 1. 获取私聊最近联系人
+      final userContacts = await _executeRawQuery(
         '''
-        WITH all_contacts AS (
-          -- 私聊消息：获取每个联系人的最后一条消息ID
-          SELECT 
-            'user' as contact_type,
-            CASE 
-              WHEN sender_id = ? THEN receiver_id 
-              ELSE sender_id 
-            END as contact_id,
-            MAX(id) as last_message_id
+        SELECT 
+          'user' as contact_type,
+          CASE WHEN sender_id = ? THEN receiver_id ELSE sender_id END as contact_id,
+          created_at as last_message_time,
+          sender_id,
+          receiver_id,
+          content,
+          message_type,
+          sender_name,
+          receiver_name,
+          sender_avatar,
+          receiver_avatar,
+          file_name,
+          NULL as group_name,
+          NULL as group_avatar,
+          (SELECT COUNT(*) FROM messages m2
+           WHERE m2.receiver_id = ? 
+             AND m2.sender_id = CASE WHEN sender_id = ? THEN receiver_id ELSE sender_id END
+             AND m2.is_read = 0 
+             AND (m2.status IS NULL OR m2.status = '' OR m2.status = 'normal')
+             AND (m2.deleted_by_users IS NULL OR m2.deleted_by_users NOT LIKE '%' || ? || '%')
+          ) as unread_count
+        FROM messages
+        WHERE id IN (
+          SELECT MAX(id)
           FROM messages
           WHERE (sender_id = ? OR receiver_id = ?)
             AND status != 'recalled'
             AND (deleted_by_users IS NULL OR deleted_by_users NOT LIKE '%' || ? || '%')
             AND NOT (sender_id = ? AND receiver_id = ?)
-          GROUP BY contact_id
-          
-          UNION ALL
-          
-          -- 群聊消息：获取每个群组的最后一条消息ID（✅ 只查询用户所属的群组）
-          SELECT 
-            'group' as contact_type,
-            gm.group_id as contact_id,
-            MAX(gm.id) as last_message_id
-          FROM group_messages gm
-          INNER JOIN group_members gmbr ON gm.group_id = gmbr.group_id AND gmbr.user_id = ?
-          WHERE gm.status != 'recalled'
-            AND (gm.deleted_by_users IS NULL OR gm.deleted_by_users NOT LIKE '%' || ? || '%')
-          GROUP BY gm.group_id
-          
-          UNION ALL
-          
-          -- 文件传输助手消息：获取最后一条消息ID（使用固定contact_id=0表示文件传输助手）
-          SELECT 
-            'file_assistant' as contact_type,
-            0 as contact_id,
-            MAX(id) as last_message_id
-          FROM file_assistant_messages
-          WHERE user_id = ?
-            AND status != 'recalled'
+          GROUP BY CASE WHEN sender_id = ? THEN receiver_id ELSE sender_id END
         )
-        SELECT 
-          ac.contact_type,
-          ac.contact_id,
-          CASE 
-            WHEN ac.contact_type = 'user' THEN (
-              SELECT m.created_at FROM messages m WHERE m.id = ac.last_message_id
-            )
-            WHEN ac.contact_type = 'group' THEN (
-              SELECT gm.created_at FROM group_messages gm WHERE gm.id = ac.last_message_id
-            )
-            ELSE (
-              SELECT fm.created_at FROM file_assistant_messages fm WHERE fm.id = ac.last_message_id
-            )
-          END as last_message_time,
-          CASE 
-            WHEN ac.contact_type = 'user' THEN (
-              SELECT m.sender_id FROM messages m WHERE m.id = ac.last_message_id
-            )
-            WHEN ac.contact_type = 'group' THEN (
-              SELECT gm.sender_id FROM group_messages gm WHERE gm.id = ac.last_message_id
-            )
-            ELSE ?
-          END as sender_id,
-          CASE 
-            WHEN ac.contact_type = 'user' THEN (
-              SELECT m.receiver_id FROM messages m WHERE m.id = ac.last_message_id
-            )
-            WHEN ac.contact_type = 'file_assistant' THEN ?
-            ELSE ac.contact_id
-          END as receiver_id,
-          CASE 
-            WHEN ac.contact_type = 'user' THEN (
-              SELECT m.content FROM messages m WHERE m.id = ac.last_message_id
-            )
-            WHEN ac.contact_type = 'group' THEN (
-              SELECT gm.content FROM group_messages gm WHERE gm.id = ac.last_message_id
-            )
-            ELSE (
-              SELECT fm.content FROM file_assistant_messages fm WHERE fm.id = ac.last_message_id
-            )
-          END as content,
-          CASE 
-            WHEN ac.contact_type = 'user' THEN (
-              SELECT m.message_type FROM messages m WHERE m.id = ac.last_message_id
-            )
-            WHEN ac.contact_type = 'group' THEN (
-              SELECT gm.message_type FROM group_messages gm WHERE gm.id = ac.last_message_id
-            )
-            ELSE (
-              SELECT fm.message_type FROM file_assistant_messages fm WHERE fm.id = ac.last_message_id
-            )
-          END as message_type,
-          CASE 
-            WHEN ac.contact_type = 'user' THEN (
-              SELECT m.sender_name FROM messages m WHERE m.id = ac.last_message_id
-            )
-            WHEN ac.contact_type = 'group' THEN (
-              SELECT gm.sender_name FROM group_messages gm WHERE gm.id = ac.last_message_id
-            )
-            ELSE NULL
-          END as sender_name,
-          CASE 
-            WHEN ac.contact_type = 'user' THEN (
-              SELECT m.receiver_name FROM messages m WHERE m.id = ac.last_message_id
-            )
-            WHEN ac.contact_type = 'file_assistant' THEN '文件传输助手'
-            ELSE NULL
-          END as receiver_name,
-          CASE 
-            WHEN ac.contact_type = 'user' THEN (
-              SELECT m.sender_avatar FROM messages m WHERE m.id = ac.last_message_id
-            )
-            WHEN ac.contact_type = 'group' THEN (
-              SELECT gm.sender_avatar FROM group_messages gm WHERE gm.id = ac.last_message_id
-            )
-            ELSE NULL
-          END as sender_avatar,
-          CASE 
-            WHEN ac.contact_type = 'user' THEN (
-              SELECT m.receiver_avatar FROM messages m WHERE m.id = ac.last_message_id
-            )
-            ELSE NULL
-          END as receiver_avatar,
-          CASE 
-            WHEN ac.contact_type = 'user' THEN (
-              SELECT m.file_name FROM messages m WHERE m.id = ac.last_message_id
-            )
-            WHEN ac.contact_type = 'group' THEN (
-              SELECT gm.file_name FROM group_messages gm WHERE gm.id = ac.last_message_id
-            )
-            ELSE (
-              SELECT fm.file_name FROM file_assistant_messages fm WHERE fm.id = ac.last_message_id
-            )
-          END as file_name,
-          CASE 
-            WHEN ac.contact_type = 'group' THEN (
-              SELECT gm.group_name FROM group_messages gm WHERE gm.id = ac.last_message_id
-            )
-            ELSE NULL
-          END as group_name,
-          CASE 
-            WHEN ac.contact_type = 'group' THEN (
-              SELECT gm.group_avatar FROM group_messages gm WHERE gm.id = ac.last_message_id
-            )
-            ELSE NULL
-          END as group_avatar,
-          CASE 
-            WHEN ac.contact_type = 'user' THEN (
-              SELECT COUNT(*) FROM messages m
-              WHERE m.receiver_id = ? 
-                AND m.sender_id = ac.contact_id
-                AND m.is_read = 0 
-                AND (m.status IS NULL OR m.status = '' OR m.status = 'normal')
-                AND (m.deleted_by_users IS NULL OR m.deleted_by_users NOT LIKE '%' || ? || '%')
-            )
-            WHEN ac.contact_type = 'group' THEN (
-              SELECT COUNT(*) FROM group_messages gm
-              WHERE gm.group_id = ac.contact_id
-                AND gm.sender_id != ?
-                AND (gm.status IS NULL OR gm.status = '' OR gm.status = 'normal')
-                AND (gm.deleted_by_users IS NULL OR gm.deleted_by_users NOT LIKE '%' || ? || '%')
-                AND NOT EXISTS (
-                  SELECT 1 FROM group_message_reads gmr
-                  WHERE gmr.group_message_id = gm.id AND gmr.user_id = ?
-                )
-            )
-            ELSE 0
-          END as unread_count
-        FROM all_contacts ac
-        ORDER BY 
-          CASE 
-            WHEN ac.contact_type = 'user' THEN (
-              SELECT m.created_at FROM messages m WHERE m.id = ac.last_message_id
-            )
-            WHEN ac.contact_type = 'group' THEN (
-              SELECT gm.created_at FROM group_messages gm WHERE gm.id = ac.last_message_id
-            )
-            ELSE (
-              SELECT fm.created_at FROM file_assistant_messages fm WHERE fm.id = ac.last_message_id
-            )
-          END DESC
-      ''',
-        [
-          userId, userId, userId, userId.toString(), userId, userId, // CTE参数
-          userId, userId.toString(), userId, // SELECT子句参数
-          userId, userId, // 文件传输助手参数
-          userId, userId.toString(), userId, userId.toString(), userId, // 未读数计算参数
-        ],
+        ''',
+        [userId, userId, userId, userId.toString(), userId, userId, userId.toString(), userId, userId, userId],
       );
+      allContacts.addAll(userContacts);
+      
+      // 2. 获取群聊最近联系人
+      final groupContacts = await _executeRawQuery(
+        '''
+        SELECT 
+          'group' as contact_type,
+          group_id as contact_id,
+          created_at as last_message_time,
+          sender_id,
+          group_id as receiver_id,
+          content,
+          message_type,
+          sender_name,
+          NULL as receiver_name,
+          sender_avatar,
+          NULL as receiver_avatar,
+          file_name,
+          group_name,
+          group_avatar,
+          (SELECT COUNT(*) FROM group_messages gm2
+           WHERE gm2.group_id = gm.group_id
+             AND gm2.sender_id != ?
+             AND (gm2.status IS NULL OR gm2.status = '' OR gm2.status = 'normal')
+             AND (gm2.deleted_by_users IS NULL OR gm2.deleted_by_users NOT LIKE '%' || ? || '%')
+             AND NOT EXISTS (
+               SELECT 1 FROM group_message_reads gmr
+               WHERE gmr.group_message_id = gm2.id AND gmr.user_id = ?
+             )
+          ) as unread_count
+        FROM group_messages gm
+        WHERE id IN (
+          SELECT MAX(gm2.id)
+          FROM group_messages gm2
+          INNER JOIN group_members gmbr ON gm2.group_id = gmbr.group_id AND gmbr.user_id = ?
+          WHERE gm2.status != 'recalled'
+            AND (gm2.deleted_by_users IS NULL OR gm2.deleted_by_users NOT LIKE '%' || ? || '%')
+          GROUP BY gm2.group_id
+        )
+        ''',
+        [userId, userId.toString(), userId, userId, userId.toString()],
+      );
+      allContacts.addAll(groupContacts);
+      
+      // 3. 获取文件传输助手最近消息
+      final fileAssistant = await _executeRawQuery(
+        '''
+        SELECT 
+          'file_assistant' as contact_type,
+          0 as contact_id,
+          created_at as last_message_time,
+          ? as sender_id,
+          ? as receiver_id,
+          content,
+          message_type,
+          NULL as sender_name,
+          '文件传输助手' as receiver_name,
+          NULL as sender_avatar,
+          NULL as receiver_avatar,
+          file_name,
+          NULL as group_name,
+          NULL as group_avatar,
+          0 as unread_count
+        FROM file_assistant_messages
+        WHERE user_id = ?
+          AND status != 'recalled'
+        ORDER BY created_at DESC
+        LIMIT 1
+        ''',
+        [userId, userId, userId],
+      );
+      allContacts.addAll(fileAssistant);
+      
+      // 4. 按时间排序
+      allContacts.sort((a, b) {
+        final aTime = a['last_message_time'] as String?;
+        final bTime = b['last_message_time'] as String?;
+        if (aTime == null) return 1;
+        if (bTime == null) return -1;
+        return bTime.compareTo(aTime);
+      });
 
-      return results;
+      return allContacts;
     } catch (e) {
       logger.debug('获取最近联系人失败: $e');
       rethrow;
@@ -2265,6 +2305,78 @@ class LocalDatabaseService {
         return null;
       }
       return results.isNotEmpty ? results.first : null;
+    } catch (e) {
+      logger.debug('检查收藏是否存在失败: $e');
+      rethrow;
+    }
+  }
+
+  /// 根据ID获取收藏信息
+  Future<Map<String, dynamic>?> getFavoriteById(int id, int userId) async {
+    try {
+      final results = await _executeQuery(
+        'favorites',
+        where: 'id = ? AND user_id = ?',
+        whereArgs: [id, userId],
+        limit: 1,
+      );
+      return results.isNotEmpty ? results.first : null;
+    } catch (e) {
+      logger.debug('获取收藏信息失败: $e');
+      rethrow;
+    }
+  }
+
+  /// 更新收藏的服务器信息（server_id和sync_status）
+  Future<void> updateFavoriteServerInfo({
+    required int localId,
+    required int serverId,
+    required String syncStatus,
+  }) async {
+    try {
+      await _executeUpdate(
+        'favorites',
+        {
+          'server_id': serverId,
+          'sync_status': syncStatus,
+        },
+        where: 'id = ?',
+        whereArgs: [localId],
+      );
+      logger.debug('更新收藏服务器信息: localId=$localId, serverId=$serverId');
+    } catch (e) {
+      logger.debug('更新收藏服务器信息失败: $e');
+      rethrow;
+    }
+  }
+
+  /// 获取待同步的收藏列表（sync_status = 'pending'）
+  Future<List<Map<String, dynamic>>> getPendingFavorites(int userId) async {
+    try {
+      final results = await _executeQuery(
+        'favorites',
+        where: 'user_id = ? AND sync_status = ?',
+        whereArgs: [userId, 'pending'],
+        orderBy: 'created_at ASC',
+      );
+      logger.debug('获取待同步收藏: ${results.length}条');
+      return results;
+    } catch (e) {
+      logger.debug('获取待同步收藏失败: $e');
+      rethrow;
+    }
+  }
+
+  /// 根据server_id检查收藏是否存在
+  Future<bool> checkFavoriteExistsByServerId(int userId, int serverId) async {
+    try {
+      final results = await _executeQuery(
+        'favorites',
+        where: 'user_id = ? AND server_id = ?',
+        whereArgs: [userId, serverId],
+        limit: 1,
+      );
+      return results.isNotEmpty;
     } catch (e) {
       logger.debug('检查收藏是否存在失败: $e');
       rethrow;

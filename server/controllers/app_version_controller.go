@@ -327,6 +327,31 @@ func (ctrl *AppVersionController) deleteOSSFile(objectKey string) error {
 	return bucket.DeleteObject(objectKey)
 }
 
+// GetAllPlatformLatestVersions 获取所有平台的最新版本（公开接口）
+func (ctrl *AppVersionController) GetAllPlatformLatestVersions(c *gin.Context) {
+	versions, err := ctrl.repo.GetLatestVersionsForAllPlatforms()
+	if err != nil {
+		utils.InternalServerError(c, "获取版本信息失败: "+err.Error())
+		return
+	}
+
+	// 直接返回各平台的版本信息，不包含 platforms 字段
+	response := gin.H{}
+
+	// 添加各平台的版本信息
+	if v, ok := versions["windows"]; ok {
+		response["windows"] = v
+	}
+	if v, ok := versions["android"]; ok {
+		response["android"] = v
+	}
+	if v, ok := versions["ios"]; ok {
+		response["ios"] = v
+	}
+
+	utils.Success(c, response)
+}
+
 // compareVersions 比较版本号 (返回: 1 表示 v1 > v2, -1 表示 v1 < v2, 0 表示相等)
 func compareVersions(v1, v2 string) int {
 	parts1 := strings.Split(v1, ".")

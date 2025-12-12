@@ -309,3 +309,40 @@ func (r *AppVersionRepository) Delete(id int) error {
 	_, err := r.DB.Exec(query, id)
 	return err
 }
+
+// GetLatestVersionsForAllPlatforms 获取所有平台的最新已发布版本
+func (r *AppVersionRepository) GetLatestVersionsForAllPlatforms() (map[string]*AppVersion, error) {
+	// 使用子查询获取每个平台的最新版本
+	query := `
+		SELECT DISTINCT ON (platform) 
+			id, version, platform, distribution_type, package_url, oss_object_key, release_notes, status,
+			is_force_update, min_supported_version, file_size, file_hash, created_at, updated_at, 
+			published_at, created_by
+		FROM app_versions 
+		WHERE status = 'published'
+		ORDER BY platform, published_at DESC
+	`
+
+	rows, err := r.DB.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make(map[string]*AppVersion)
+	for rows.Next() {
+		v := &AppVersion{}
+		err := rows.Scan(
+			&v.ID, &v.Version, &v.Platform, &v.DistributionType, &v.PackageURL, &v.OSSObjectKey,
+			&v.ReleaseNotes, &v.Status, &v.IsForceUpdate, &v.MinSupportedVersion,
+			&v.FileSize, &v.FileHash, &v.CreatedAt, &v.UpdatedAt,
+			&v.PublishedAt, &v.CreatedBy,
+		)
+		if err != nil {
+			return nil, err
+		}
+		result[v.Platform] = v
+	}
+
+	return result, nil
+}

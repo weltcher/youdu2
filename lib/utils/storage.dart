@@ -928,6 +928,44 @@ class Storage {
     logger.debug('🗑️ 清除数据库修复时间');
   }
 
+  // ============ 首次同步完成标记（按用户ID隔离） ============
+  
+  static String _getFirstSyncCompletedKey(int userId) => 'user_${userId}_first_sync_completed';
+  
+  /// 保存首次同步完成状态
+  static Future<void> saveFirstSyncCompleted(bool completed) async {
+    final userId = await getUserId();
+    if (userId == null) return;
+    
+    final prefs = await SharedPreferences.getInstance();
+    final key = _getFirstSyncCompletedKey(userId);
+    await prefs.setBool(key, completed);
+    logger.debug('💾 保存首次同步完成状态: $completed (userId: $userId)');
+  }
+  
+  /// 获取首次同步完成状态
+  static Future<bool> getFirstSyncCompleted() async {
+    final userId = await getUserId();
+    if (userId == null) return false;
+    
+    final prefs = await SharedPreferences.getInstance();
+    final key = _getFirstSyncCompletedKey(userId);
+    final completed = prefs.getBool(key) ?? false;
+    logger.debug('📖 读取首次同步完成状态: $completed (userId: $userId)');
+    return completed;
+  }
+  
+  /// 清除首次同步完成状态（用于重新同步）
+  static Future<void> clearFirstSyncCompleted() async {
+    final userId = await getUserId();
+    if (userId == null) return;
+    
+    final prefs = await SharedPreferences.getInstance();
+    final key = _getFirstSyncCompletedKey(userId);
+    await prefs.remove(key);
+    logger.debug('🗑️ 清除首次同步完成状态 (userId: $userId)');
+  }
+
   /// 保存布尔值
   static Future<void> setBool(String key, bool value) async {
     final prefs = await SharedPreferences.getInstance();
