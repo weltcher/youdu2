@@ -47,7 +47,7 @@ dependencies:
   agora_rtc_engine:  # Agora 音视频通话 SDK
     path: ./third/Agora-Flutter-SDK
   sqflite: ^2.3.0  # SQLite 数据库（移动端）
-  sqflite_sqlcipher: ^2.2.1  # SQLite 加密数据库（移动端加密）
+  sqflite_sqlcipher: ^3.4.0  # SQLite 加密数据库（移动端加密）
   sqflite_common_ffi: ^2.3.0  # SQLite 数据库（桌面端）
   sqlite3: ^2.3.0  # SQLite3 FFI（用于加载 SQLCipher）
   sqlcipher_flutter_libs: ^0.6.0  # SQLCipher 跨平台支持（包含 Windows DLL 和 OpenSSL）

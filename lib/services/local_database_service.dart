@@ -5,6 +5,7 @@ import 'package:crypto/crypto.dart';
 import 'package:path/path.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart' as sqflite_ffi;
 import 'package:sqflite/sqflite.dart';
+// iOS 使用普通 sqflite（不加密），Android 使用 sqflite_sqlcipher（加密）
 import 'package:sqflite_sqlcipher/sqflite.dart' as sqflite_cipher;
 import 'package:sqlite3/open.dart' as sqlite3_open;
 import 'package:sqlite3/sqlite3.dart' as sqlite3;
@@ -831,35 +832,60 @@ class LocalDatabaseService {
       
       // 移动端和桌面端使用不同的加密方式
       if (!kIsWeb && (Platform.isAndroid || Platform.isIOS)) {
-        logger.debug('📦 [数据库初始化] 步骤4: 使用 sqflite_cipher 打开移动端数据库...');
-        logger.debug('📦 [数据库初始化] 参数: path=$path, version=3');
+        Database db;
         
-        try {
-          var db = await sqflite_cipher.openDatabase(
-            path,
-            password: databaseKey, // 🔐 设置数据库密码（复杂密钥）
-            version: 7, // 🔴 升级到版本7（添加group_messages表的file_size、is_read、is_recalled字段）
-            onCreate: _createDatabase,
-            onUpgrade: _upgradeDatabase,
-          );
-          logger.debug('📦 [数据库初始化] 步骤5: 数据库打开成功');
+        // iOS 使用普通 sqflite（不加密），Android 使用 sqflite_cipher（加密）
+        if (Platform.isIOS) {
+          logger.debug('📦 [数据库初始化] 步骤4: iOS 平台使用普通 sqflite（不加密）...');
+          logger.debug('📦 [数据库初始化] 参数: path=$path, version=7');
           
-          // 创建移动端Provider
-          logger.debug('📦 [数据库初始化] 步骤6: 创建移动端Provider...');
-          _mobileProvider = MobileDatabaseProvider(db);
-          logger.debug('📦 [数据库初始化] 步骤7: Provider创建成功');
+          try {
+            db = await openDatabase(
+              path,
+              version: 7,
+              onCreate: _createDatabase,
+              onUpgrade: _upgradeDatabase,
+            );
+            logger.debug('📦 [数据库初始化] 步骤5: iOS 数据库打开成功（无加密）');
+          } catch (e, stackTrace) {
+            logger.debug('❌ [数据库初始化] iOS openDatabase 失败！');
+            logger.debug('❌ [数据库初始化] 错误类型: ${e.runtimeType}');
+            logger.debug('❌ [数据库初始化] 错误信息: $e');
+            logger.debug('❌ [数据库初始化] 堆栈跟踪:\n$stackTrace');
+            rethrow;
+          }
+        } else {
+          // Android 使用 sqflite_cipher 加密
+          logger.debug('📦 [数据库初始化] 步骤4: Android 平台使用 sqflite_cipher（加密）...');
+          logger.debug('📦 [数据库初始化] 参数: path=$path, version=7');
           
-          logger.debug('📦 [数据库初始化] 步骤8: 确保联系人快照表存在...');
-          await _ensureContactSnapshotTable();
-          logger.debug('✅ 数据库初始化成功（移动端）');
-          return db;
-        } catch (e, stackTrace) {
-          logger.debug('❌ [数据库初始化] sqflite_cipher.openDatabase 失败！');
-          logger.debug('❌ [数据库初始化] 错误类型: ${e.runtimeType}');
-          logger.debug('❌ [数据库初始化] 错误信息: $e');
-          logger.debug('❌ [数据库初始化] 堆栈跟踪:\n$stackTrace');
-          rethrow;
+          try {
+            db = await sqflite_cipher.openDatabase(
+              path,
+              password: databaseKey, // 🔐 设置数据库密码（复杂密钥）
+              version: 7, // 🔴 升级到版本7（添加group_messages表的file_size、is_read、is_recalled字段）
+              onCreate: _createDatabase,
+              onUpgrade: _upgradeDatabase,
+            );
+            logger.debug('📦 [数据库初始化] 步骤5: Android 数据库打开成功（已加密）');
+          } catch (e, stackTrace) {
+            logger.debug('❌ [数据库初始化] sqflite_cipher.openDatabase 失败！');
+            logger.debug('❌ [数据库初始化] 错误类型: ${e.runtimeType}');
+            logger.debug('❌ [数据库初始化] 错误信息: $e');
+            logger.debug('❌ [数据库初始化] 堆栈跟踪:\n$stackTrace');
+            rethrow;
+          }
         }
+        
+        // 创建移动端Provider
+        logger.debug('📦 [数据库初始化] 步骤6: 创建移动端Provider...');
+        _mobileProvider = MobileDatabaseProvider(db);
+        logger.debug('📦 [数据库初始化] 步骤7: Provider创建成功');
+        
+        logger.debug('📦 [数据库初始化] 步骤8: 确保联系人快照表存在...');
+        await _ensureContactSnapshotTable();
+        logger.debug('✅ 数据库初始化成功（移动端）');
+        return db;
       } else {
         logger.debug('📦 [数据库初始化] 步骤4: 使用 sqlite3 打开桌面端数据库...');
         // 桌面端返回 sqlite3.Database

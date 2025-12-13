@@ -1,11 +1,14 @@
+import 'dart:io';
 import 'package:sqflite/sqflite.dart';
 import 'package:sqflite_common/sqlite_api.dart' show ConflictAlgorithm;
-import 'package:sqflite_sqlcipher/sqflite.dart' as sqflite_cipher;
+// iOS 不使用 sqlcipher（网络问题无法下载依赖），Android 使用加密
+// sqflite_sqlcipher 仅在 Android 平台导入使用
 import '../utils/logger.dart';
 import 'database_provider.dart';
 
 /// 移动端数据库提供者（Android/iOS）
-/// 使用 sqflite_sqlcipher 实现加密数据库
+/// Android: 使用 sqflite_sqlcipher 实现加密数据库
+/// iOS: 使用普通 sqflite（不加密）
 class MobileDatabaseProvider implements DatabaseProvider {
   late Database _db;
   
