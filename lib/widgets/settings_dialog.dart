@@ -7,6 +7,8 @@ import 'package:youdu/utils/storage.dart';
 import 'package:youdu/utils/app_localizations.dart';
 import 'package:youdu/main.dart';
 import '../utils/logger.dart';
+import '../services/update_service.dart';
+import 'update_dialog.dart';
 
 /// 设置对话
 class SettingsDialog extends StatefulWidget {
@@ -48,6 +50,9 @@ class _SettingsDialogState extends State<SettingsDialog> {
   bool _autoDownloadEnabled = true;
   bool _idleStatusEnabled = true;
   String _selectedLanguage = '简体中文';
+  
+  // 版本信息
+  String _versionInfo = '加载中...';
   String _selectedZoom = '75%（默认）';
 
   // 消息通知设置状态
@@ -81,6 +86,122 @@ class _SettingsDialogState extends State<SettingsDialog> {
     _loadSavedLanguage();
     _loadSavedZoom();
     _loadNotificationSettings();
+    _loadVersionInfo();
+  }
+  
+  /// 加载版本信息
+  Future<void> _loadVersionInfo() async {
+    try {
+      final versionData = await UpdateService.getCurrentVersion();
+      final version = versionData['version'] ?? '未知';
+      
+      if (mounted) {
+        setState(() {
+          _versionInfo = version;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _versionInfo = '1.0.0';
+        });
+      }
+    }
+  }
+
+  /// 检查新版本
+  Future<void> _checkForUpdate() async {
+    final i18n = AppLocalizations.of(context);
+    
+    // 显示检查中的对话框
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        content: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(
+              width: 24,
+              height: 24,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+            const SizedBox(width: 16),
+            Text(i18n.translate('checking_update')),
+          ],
+        ),
+      ),
+    );
+
+    try {
+      final updateService = UpdateService();
+      final updateInfo = await updateService.checkUpdate();
+
+      // 关闭检查中的对话框
+      if (mounted) {
+        Navigator.pop(context);
+      }
+
+      if (updateInfo != null && mounted) {
+        // 有新版本，显示更新对话框
+        await UpdateDialog.show(
+          context,
+          updateInfo,
+          onUpdateComplete: () {
+            // 更新完成回调
+          },
+        );
+      } else if (mounted) {
+        // 没有新版本，显示提示
+        showDialog(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: Row(
+              children: [
+                const Icon(Icons.check_circle, color: Colors.green),
+                const SizedBox(width: 8),
+                Text(i18n.translate('check_update')),
+              ],
+            ),
+            content: Text(i18n.translate('no_update')),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: Text(i18n.translate('confirm')),
+              ),
+            ],
+          ),
+        );
+      }
+    } catch (e) {
+      // 关闭检查中的对话框
+      if (mounted) {
+        Navigator.pop(context);
+      }
+      
+      // 显示错误提示
+      if (mounted) {
+        showDialog(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: Row(
+              children: [
+                const Icon(Icons.error_outline, color: Colors.red),
+                const SizedBox(width: 8),
+                Text(i18n.translate('check_update')),
+              ],
+            ),
+            content: Text(i18n.translate('update_check_failed')),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: Text(i18n.translate('confirm')),
+              ),
+            ],
+          ),
+        );
+      }
+    }
   }
 
   /// 加载保存的语言设置
@@ -1083,7 +1204,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                         ),
                       ),
                       Text(
-                        i18n.translate('version_value'),
+                        _versionInfo,
                         style: const TextStyle(
                           fontSize: 14,
                           color: Color(0xFF333333),
@@ -1092,7 +1213,13 @@ class _SettingsDialogState extends State<SettingsDialog> {
                       const SizedBox(width: 8),
                       TextButton(
                         onPressed: () {
-                          // TODO: 复制版本号到剪贴板
+                          Clipboard.setData(ClipboardData(text: _versionInfo));
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(i18n.translate('copied')),
+                              duration: const Duration(seconds: 1),
+                            ),
+                          );
                         },
                         style: TextButton.styleFrom(
                           padding: EdgeInsets.zero,
@@ -1116,9 +1243,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
             SizedBox(
               height: 36,
               child: OutlinedButton(
-                onPressed: () {
-                  // TODO: 检查新版本
-                },
+                onPressed: _checkForUpdate,
                 style: OutlinedButton.styleFrom(
                   side: const BorderSide(color: Color(0xFF4A90E2)),
                   foregroundColor: const Color(0xFF4A90E2),

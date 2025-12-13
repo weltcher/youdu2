@@ -42,6 +42,7 @@ class _UpdateDialogState extends State<UpdateDialog> {
   bool _isDownloading = false;
   bool _isInstalling = false;
   bool _downloadComplete = false;
+  bool _usedCachedFile = false; // 是否使用了已下载的文件
   double _progress = 0.0;
   String? _downloadedFilePath;
   String? _errorMessage;
@@ -53,8 +54,7 @@ class _UpdateDialogState extends State<UpdateDialog> {
   @override
   void initState() {
     super.initState();
-    // 自动开始下载
-    _startDownload();
+    // 不自动下载，等待用户点击"立即更新"
   }
 
   @override
@@ -63,11 +63,17 @@ class _UpdateDialogState extends State<UpdateDialog> {
     super.dispose();
   }
 
-  void _startDownload() async {
+  /// 用户点击"立即更新"后开始下载并安装
+  void _startDownloadAndInstall() {
+    _startDownload(autoInstall: true);
+  }
+
+  void _startDownload({bool autoInstall = false}) async {
     setState(() {
       _isDownloading = true;
       _progress = 0.0;
       _errorMessage = null;
+      _usedCachedFile = false;
     });
 
     // 启动定时器，每500ms更新一次进度（节流）
@@ -80,6 +86,9 @@ class _UpdateDialogState extends State<UpdateDialog> {
     });
 
     try {
+      // 记录开始时间，用于判断是否使用了缓存文件
+      final startTime = DateTime.now();
+      
       final filePath = await _updateService.downloadUpdate(
         widget.updateInfo,
         (received, total) {
@@ -93,14 +102,13 @@ class _UpdateDialogState extends State<UpdateDialog> {
       _progressTimer?.cancel();
 
       if (filePath == null) {
-        throw Exception('下载失败');
+        throw Exception('下载失败：未知错误');
       }
 
-      // 校验文件
-      final isValid = await _updateService.verifyFile(filePath, widget.updateInfo.md5);
-      if (!isValid) {
-        await File(filePath).delete();
-        throw Exception('文件校验失败');
+      // 如果下载很快完成（小于1秒），可能是使用了缓存文件
+      final duration = DateTime.now().difference(startTime);
+      if (duration.inMilliseconds < 1000 && _progress >= 1.0) {
+        _usedCachedFile = true;
       }
 
       _downloadedFilePath = filePath;
@@ -111,13 +119,23 @@ class _UpdateDialogState extends State<UpdateDialog> {
           _downloadComplete = true;
           _progress = 1.0;
         });
+        
+        // 下载完成后自动进入安装
+        if (autoInstall) {
+          _installUpdate();
+        }
       }
     } catch (e) {
       _progressTimer?.cancel();
       if (mounted) {
+        // 提取更友好的错误信息
+        String errorMsg = e.toString();
+        if (errorMsg.startsWith('Exception: ')) {
+          errorMsg = errorMsg.substring('Exception: '.length);
+        }
         setState(() {
           _isDownloading = false;
-          _errorMessage = e.toString();
+          _errorMessage = errorMsg;
         });
       }
     }
@@ -234,15 +252,28 @@ class _UpdateDialogState extends State<UpdateDialog> {
   }
 
   Widget _buildDownloadProgress(AppLocalizations localizations) {
+    // 未开始下载时不显示进度条
+    if (!_isDownloading && !_downloadComplete && _errorMessage == null) {
+      return const SizedBox.shrink();
+    }
+    
     final percent = (_progress * 100).toStringAsFixed(1);
     final downloadedMB = (widget.updateInfo.fileSize * _progress / 1024 / 1024).toStringAsFixed(2);
     final totalMB = (widget.updateInfo.fileSize / 1024 / 1024).toStringAsFixed(2);
     
     String statusText;
     if (_isDownloading) {
-      statusText = '${localizations.translate('downloading')} $percent% ($downloadedMB MB / $totalMB MB)';
+      if (_usedCachedFile && _progress >= 1.0) {
+        statusText = '使用已下载的文件';
+      } else {
+        statusText = '${localizations.translate('downloading')} $percent% ($downloadedMB MB / $totalMB MB)';
+      }
     } else if (_downloadComplete) {
-      statusText = localizations.translate('download_complete');
+      if (_usedCachedFile) {
+        statusText = '使用已下载的文件';
+      } else {
+        statusText = localizations.translate('download_complete');
+      }
     } else if (_errorMessage != null) {
       statusText = localizations.translate('download_failed');
     } else {
@@ -320,32 +351,33 @@ class _UpdateDialogState extends State<UpdateDialog> {
       ];
     }
 
-    // 下载失败：显示重试按钮
+    // 下载失败：显示取消按钮
     if (_errorMessage != null) {
       return [
         TextButton(
-          onPressed: _startDownload,
-          child: Text(localizations.translate('retry')),
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(localizations.translate('cancel')),
         ),
       ];
     }
 
-    // 下载完成：显示立即更新和稍后按钮
+    // 下载完成：自动进入安装，不显示按钮
     if (_downloadComplete) {
-      return [
-        if (!widget.updateInfo.forceUpdate)
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: Text(localizations.translate('later')),
-          ),
-        ElevatedButton(
-          onPressed: _installUpdate,
-          child: Text(localizations.translate('update_now')),
-        ),
-      ];
+      return [];
     }
 
-    return [];
+    // 未开始下载：显示立即更新和稍后按钮
+    return [
+      if (!widget.updateInfo.forceUpdate)
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(localizations.translate('later')),
+        ),
+      ElevatedButton(
+        onPressed: _startDownloadAndInstall,
+        child: Text(localizations.translate('update_now')),
+      ),
+    ];
   }
 
   Future<void> _installUpdate() async {

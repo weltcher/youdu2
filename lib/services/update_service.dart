@@ -124,29 +124,39 @@ class UpdateService {
     Function(int received, int total)? onProgress,
   ) async {
     try {
+      logger.info('📥 [下载更新] 开始下载: ${updateInfo.downloadUrl}');
+      
       final dir = await _getDownloadDirectory();
+      logger.debug('📁 [下载更新] 下载目录: ${dir.path}');
+      
       final fileName = _getUpdateFileName(updateInfo.downloadUrl);
       final filePath = path.join(dir.path, fileName);
       final file = File(filePath);
+      
+      logger.debug('📦 [下载更新] 文件路径: $filePath');
 
-      // 如果文件已存在且MD5匹配，直接返回
+      // 如果文件已存在，直接返回（不校验MD5）
       if (await file.exists()) {
-        final isValid = await verifyFile(filePath, updateInfo.md5);
-        if (isValid) {
-          return filePath;
-        }
-        await file.delete();
+        logger.info('📦 [下载更新] 发现已下载的文件');
+        final fileSize = await file.length();
+        logger.info('✅ [下载更新] 使用已下载的文件，跳过下载 (${(fileSize / 1024 / 1024).toStringAsFixed(2)} MB)');
+        // 通知进度为100%，让UI知道已经完成
+        onProgress?.call(updateInfo.fileSize, updateInfo.fileSize);
+        return filePath;
       }
 
-      // 静默下载，不打印日志避免影响主线程
+      logger.info('🌐 [下载更新] 开始HTTP请求...');
       final request = http.Request('GET', Uri.parse(updateInfo.downloadUrl));
       final response = await request.send();
 
       if (response.statusCode != 200) {
-        throw Exception('下载失败: ${response.statusCode}');
+        logger.error('❌ [下载更新] HTTP错误: ${response.statusCode}');
+        throw Exception('服务器返回错误: HTTP ${response.statusCode}');
       }
 
       final contentLength = response.contentLength ?? updateInfo.fileSize;
+      logger.info('📊 [下载更新] 文件大小: ${(contentLength / 1024 / 1024).toStringAsFixed(2)} MB');
+      
       int received = 0;
 
       final sink = file.openWrite();
@@ -157,9 +167,13 @@ class UpdateService {
         onProgress?.call(received, contentLength);
       }
       await sink.close();
+      
+      logger.info('✅ [下载更新] 下载完成: $filePath');
       return filePath;
     } catch (e) {
-      return null;
+      logger.error('❌ [下载更新] 下载失败: $e');
+      // 重新抛出异常，让调用方知道具体的错误信息
+      rethrow;
     }
   }
 
@@ -195,45 +209,61 @@ class UpdateService {
     try {
       final file = File(filePath);
       if (!await file.exists()) {
+        logger.error('❌ [文件校验] 文件不存在: $filePath');
         return false;
       }
 
       // 如果没有提供MD5，跳过校验
       if (expectedMd5.isEmpty) {
+        logger.warning('⚠️ [文件校验] 未提供MD5，跳过校验');
         return true;
       }
 
+      logger.info('🔐 [文件校验] 开始计算文件MD5...');
+      final fileSize = await file.length();
+      logger.debug('📦 [文件校验] 文件大小: ${(fileSize / 1024 / 1024).toStringAsFixed(2)} MB');
+      
       final bytes = await file.readAsBytes();
       final digest = md5.convert(bytes);
       final fileMd5 = digest.toString();
 
-      return fileMd5.toLowerCase() == expectedMd5.toLowerCase();
+      logger.info('🔐 [文件校验] 期望MD5: ${expectedMd5.toLowerCase()}');
+      logger.info('🔐 [文件校验] 实际MD5: ${fileMd5.toLowerCase()}');
+      
+      final isValid = fileMd5.toLowerCase() == expectedMd5.toLowerCase();
+      if (isValid) {
+        logger.info('✅ [文件校验] MD5校验通过');
+      } else {
+        logger.error('❌ [文件校验] MD5校验失败');
+      }
+      
+      return isValid;
     } catch (e) {
+      logger.error('❌ [文件校验] 校验过程出错: $e');
       return false;
     }
   }
 
   /// 获取更新文件名
-  /// 优先从下载URL中提取文件扩展名，如果无法提取则使用默认扩展名
+  /// 直接从下载URL中提取完整文件名（包含版本号）
   String _getUpdateFileName(String downloadUrl) {
-    // 从URL中提取文件名和扩展名
+    // 从URL中提取完整文件名
     try {
       final uri = Uri.parse(downloadUrl);
       final urlPath = uri.path;
       final urlFileName = path.basename(urlPath);
       
-      // 如果URL包含有效的文件扩展名，使用它
-      if (urlFileName.contains('.')) {
-        final extension = path.extension(urlFileName);
-        if (extension.isNotEmpty) {
-          return 'youdu_update$extension';
-        }
+      // 如果URL包含有效的文件名，直接使用
+      if (urlFileName.isNotEmpty && urlFileName.contains('.')) {
+        logger.debug('📦 [文件名] 从URL提取: $urlFileName');
+        return urlFileName;
       }
     } catch (e) {
-      // 忽略错误
+      logger.warning('⚠️ [文件名] 从URL提取失败: $e');
     }
 
-    // 使用默认扩展名
+    // 如果无法从URL提取，使用默认文件名
+    logger.debug('📦 [文件名] 使用默认文件名');
     if (Platform.isWindows) {
       return 'youdu_update.exe';
     } else if (Platform.isMacOS) {

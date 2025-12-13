@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:youdu/utils/storage.dart';
 import 'package:youdu/utils/app_localizations.dart';
 import 'package:youdu/main.dart';
+import 'package:youdu/services/update_service.dart';
+import 'package:youdu/widgets/update_dialog.dart';
+import 'package:youdu/models/update_info.dart';
 
 /// 移动端设置页面
 class MobileSettingsPage extends StatefulWidget {
@@ -18,11 +21,16 @@ class _MobileSettingsPageState extends State<MobileSettingsPage> {
   // 消息通知设置
   bool _newMessageSoundEnabled = false;
   bool _newMessagePopupEnabled = true;
+  
+  // 版本信息
+  String _versionInfo = '加载中...';
+  String _releaseDate = '';
 
   @override
   void initState() {
     super.initState();
     _loadSettings();
+    _loadVersionInfo();
   }
 
   /// 加载保存的设置
@@ -36,6 +44,22 @@ class _MobileSettingsPageState extends State<MobileSettingsPage> {
       _newMessageSoundEnabled = soundEnabled;
       _newMessagePopupEnabled = popupEnabled;
     });
+  }
+  
+  /// 加载版本信息
+  Future<void> _loadVersionInfo() async {
+    try {
+      final versionData = await UpdateService.getCurrentVersion();
+      final version = versionData['version'] ?? '未知';
+      
+      setState(() {
+        _versionInfo = 'v$version';
+      });
+    } catch (e) {
+      setState(() {
+        _versionInfo = 'v1.0.0';
+      });
+    }
   }
 
   @override
@@ -90,7 +114,7 @@ class _MobileSettingsPageState extends State<MobileSettingsPage> {
                 const Divider(height: 1, indent: 16),
                 _buildArrowItem(
                   title: '版本信息',
-                  subtitle: 'v10.0.12-2025102401',
+                  subtitle: _versionInfo,
                   onTap: () {
                     _showAboutDialog();
                   },
@@ -255,47 +279,193 @@ class _MobileSettingsPageState extends State<MobileSettingsPage> {
   void _showAboutDialog() {
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Row(
-          children: [
-            Container(
-              width: 48,
-              height: 48,
-              decoration: BoxDecoration(
-                color: const Color(0xFF4A90E2),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Icon(
-                Icons.chat_bubble,
-                size: 28,
-                color: Colors.white,
-              ),
-            ),
-            const SizedBox(width: 12),
-            const Text('有度即时通'),
-          ],
+      builder: (context) => _AboutDialog(currentVersion: _versionInfo),
+    );
+  }
+
+  /// 信息行
+  Widget _buildInfoRow(String label, String value) {
+    return Row(
+      children: [
+        Text(
+          '$label：',
+          style: const TextStyle(fontSize: 14, color: Color(0xFF666666)),
         ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _buildInfoRow('版本', 'v10.0.12-2025102401'),
-            const SizedBox(height: 12),
-            _buildInfoRow('发布时间', '2025-10-24'),
-            const SizedBox(height: 24),
-            const Text(
-              '有度是一款专为企业打造的安全、高效的即时通讯工具。',
-              style: TextStyle(fontSize: 14, color: Color(0xFF666666)),
-            ),
-          ],
+        Text(
+          value,
+          style: const TextStyle(fontSize: 14, color: Color(0xFF333333)),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('确定'),
+      ],
+    );
+  }
+}
+
+/// 关于对话框
+class _AboutDialog extends StatefulWidget {
+  final String currentVersion;
+
+  const _AboutDialog({required this.currentVersion});
+
+  @override
+  State<_AboutDialog> createState() => _AboutDialogState();
+}
+
+class _AboutDialogState extends State<_AboutDialog> {
+  bool _isChecking = true;
+  bool _hasUpdate = false;
+  String _statusText = '已是最新版本。';
+  String? _newVersion;
+  String? _releaseNotes;
+  UpdateInfo? _updateInfo; // 保存完整的更新信息
+
+  @override
+  void initState() {
+    super.initState();
+    _checkForUpdate();
+  }
+
+  /// 检查更新
+  Future<void> _checkForUpdate() async {
+    try {
+      final updateService = UpdateService();
+      final updateInfo = await updateService.checkUpdate();
+
+      if (mounted) {
+        if (updateInfo != null) {
+          setState(() {
+            _isChecking = false;
+            _hasUpdate = true;
+            _updateInfo = updateInfo; // 保存完整的更新信息
+            _newVersion = updateInfo.version;
+            _releaseNotes = updateInfo.releaseNotes;
+            _statusText = '发现最新版本 ${updateInfo.version}';
+          });
+        } else {
+          setState(() {
+            _isChecking = false;
+            _hasUpdate = false;
+            _statusText = '已是最新版本。';
+          });
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isChecking = false;
+          _hasUpdate = false;
+          _statusText = '已是最新版本。';
+        });
+      }
+    }
+  }
+
+  /// 开始更新
+  void _startUpdate() async {
+    // 检查是否有保存的更新信息
+    final updateInfo = _updateInfo;
+    if (updateInfo == null) {
+      return;
+    }
+
+    // 关闭当前对话框
+    Navigator.pop(context);
+
+    // 直接使用已检查到的更新信息显示更新对话框
+    if (mounted) {
+      await UpdateDialog.show(
+        context,
+        updateInfo,
+        onUpdateComplete: () {
+          // 更新完成回调
+        },
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Row(
+        children: [
+          Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              color: const Color(0xFF4A90E2),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: const Icon(
+              Icons.chat_bubble,
+              size: 28,
+              color: Colors.white,
+            ),
           ),
+          const SizedBox(width: 12),
+          const Text('有度即时通'),
         ],
       ),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildInfoRow('版本', widget.currentVersion),
+          const SizedBox(height: 24),
+          if (_isChecking)
+            const Row(
+              children: [
+                SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+                SizedBox(width: 12),
+                Text(
+                  '正在检查更新...',
+                  style: TextStyle(fontSize: 14, color: Color(0xFF666666)),
+                ),
+              ],
+            )
+          else ...[
+            Text(
+              _statusText,
+              style: TextStyle(
+                fontSize: 14,
+                color: _hasUpdate ? const Color(0xFF4A90E2) : const Color(0xFF666666),
+                fontWeight: _hasUpdate ? FontWeight.w500 : FontWeight.normal,
+              ),
+            ),
+            if (_hasUpdate && _releaseNotes != null) ...[
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF5F5F5),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  _releaseNotes!,
+                  style: const TextStyle(fontSize: 13, color: Color(0xFF666666)),
+                ),
+              ),
+            ],
+          ],
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: Text(_hasUpdate ? '稍后' : '确定'),
+        ),
+        if (_hasUpdate)
+          ElevatedButton(
+            onPressed: _startUpdate,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF4A90E2),
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('立即更新'),
+          ),
+      ],
     );
   }
 

@@ -41,9 +41,9 @@ class UpdateChecker {
           final updateInfo = _updateManager.updateInfo!;
           logger.info('✅ [升级检查] 发现新版本: ${updateInfo.version}');
           
-          // 直接弹窗显示下载进度
+          // 弹窗展示版本信息，等待用户点击"立即更新"后才下载
           if (context.mounted) {
-            logger.info('💬 [升级检查] 弹窗显示下载进度');
+            logger.info('💬 [升级检查] 弹窗展示版本信息');
             _showUpdateDialog(context, updateInfo);
           }
         } else {
@@ -77,7 +77,7 @@ class UpdateChecker {
 
       if (hasUpdate && _updateManager.updateInfo != null) {
         logger.info('✅ [手动检查] 发现新版本: ${_updateManager.updateInfo!.version}');
-        // 直接弹窗显示下载进度
+        // 弹窗展示版本信息，等待用户点击"立即更新"后才下载
         if (context.mounted) {
           _showUpdateDialog(context, _updateManager.updateInfo!);
           return true;
