@@ -42,7 +42,7 @@ class AppLocalizations {
       'auto_login_next_time': '下次自动登录',
 
       // 主页
-      'chat': '会话44',
+      'chat': '会话',
       'contacts': '通讯录',
       'news': '资讯',
       'todo': '待办',

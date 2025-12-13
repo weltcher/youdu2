@@ -2,8 +2,12 @@
 // 用于录入版本信息并将升级包推送到OSS
 // 支持 upsert 模式：如果平台版本不存在则新增，存在则更新
 // 使用方法:
-// windows平台： go run publish_version.go -platform windows -version 1.0.4-1765520149 -url "https://youdu-chat2.oss-cn-beijing.aliyuncs.com/1.0.4-1765520149.zip" -file "C:\Users\WIN10\source\flutter\chat\youdu2\build\windows\x64\runner\1.0.4-1765520149.zip" -notes "初始化版本"
-// 安卓:go run publish_version.go -platform android -version 1.0.13-1765520158 -url "https://youdu-chat2.oss-cn-beijing.aliyuncs.com/1.0.4-1765520149.zip" -file "C:\Users\WIN10\source\flutter\chat\youdu2\build\windows\x64\runner\1.0.4-1765520149.zip" -notes "初始化版本"
+// iOS平台（只需URL，不需要本地文件）:
+//   go run publish_version.go -platform ios -version 1.0.4 -url "https://apps.apple.com/app/yourapp/id123456789" -notes "新功能"
+// Windows平台:
+//   go run publish_version.go -platform windows -version 1.0.4-1765520149 -url "https://youdu-chat2.oss-cn-beijing.aliyuncs.com/1.0.4-1765520149.zip" -file "C:\Users\WIN10\source\flutter\chat\youdu2\build\windows\x64\runner\1.0.4-1765520149.zip" -notes "初始化版本"
+// Android平台:
+//   go run publish_version.go -platform android -version 1.0.13-1765520158 -url "https://youdu-chat2.oss-cn-beijing.aliyuncs.com/1.0.4-1765520149.apk" -file "./build/app.apk" -notes "初始化版本"
 package main
 
 import (
@@ -90,8 +94,10 @@ func main() {
 	}
 
 	// 确定模式：
-	// 1. URL模式：提供 -url 和 -file（从本地文件计算MD5，不上传OSS）
-	// 2. OSS上传模式：只提供 -file（上传到OSS）
+	// 1. iOS URL模式：只提供 -url（iOS通过App Store分发，不需要本地文件）
+	// 2. URL模式：提供 -url 和 -file（从本地文件计算MD5，不上传OSS）
+	// 3. OSS上传模式：只提供 -file（上传到OSS）
+	isIOS := *platform == "ios"
 	useURLMode := *distributionURL != ""
 	useOSSUpload := *filePath != "" && *distributionURL == ""
 
@@ -101,14 +107,28 @@ func main() {
 		os.Exit(1)
 	}
 
-	// URL模式必须同时提供本地文件路径来计算MD5
-	if useURLMode && *filePath == "" {
-		fmt.Println("错误: URL模式必须同时提供 -file 参数来计算文件MD5和大小")
-		printUsage()
-		os.Exit(1)
+	// iOS平台：必须提供 -url，不需要 -file
+	if isIOS {
+		if *distributionURL == "" {
+			fmt.Println("错误: iOS平台必须提供 -url 参数（App Store或TestFlight链接）")
+			printUsage()
+			os.Exit(1)
+		}
+		// iOS不需要本地文件，忽略 -file 参数
+		if *filePath != "" {
+			fmt.Println("提示: iOS平台忽略 -file 参数，将只使用 -url")
+			*filePath = ""
+		}
+	} else {
+		// 非iOS平台：URL模式必须同时提供本地文件路径来计算MD5
+		if useURLMode && *filePath == "" {
+			fmt.Println("错误: URL模式必须同时提供 -file 参数来计算文件MD5和大小")
+			printUsage()
+			os.Exit(1)
+		}
 	}
 
-	// 检查文件是否存在
+	// 检查文件是否存在（非iOS平台且提供了文件路径时）
 	if *filePath != "" {
 		if _, err := os.Stat(*filePath); os.IsNotExist(err) {
 			fmt.Printf("错误: 文件不存在: %s\n", *filePath)
@@ -127,17 +147,22 @@ func main() {
 	fmt.Println("╚════════════════════════════════════════╝")
 	fmt.Printf("\n📦 平台: %s\n", strings.ToUpper(*platform))
 	fmt.Printf("🏷️  版本: %s\n", *version)
-	if useURLMode {
+	if isIOS && useURLMode {
+		fmt.Printf("🔗 模式: iOS URL模式（App Store/TestFlight链接）\n")
+		fmt.Printf("🌐 下载地址: %s\n", *distributionURL)
+	} else if useURLMode {
 		fmt.Printf("🔗 模式: URL下载地址（从本地文件计算MD5）\n")
 		fmt.Printf("🌐 下载地址: %s\n", *distributionURL)
 		fmt.Printf("📄 本地文件: %s\n", *filePath)
 	} else if useOSSUpload {
-		fmt.Printf("� 模式: 文s件上传到OSS\n")
+		fmt.Printf("☁️  模式: 文件上传到OSS\n")
 		fmt.Printf("📄 文件: %s\n", *filePath)
 	}
-	if fileInfo, err := os.Stat(*filePath); err == nil {
-		sizeMB := float64(fileInfo.Size()) / 1024 / 1024
-		fmt.Printf("💾 大小: %.2f MB\n", sizeMB)
+	if *filePath != "" {
+		if fileInfo, err := os.Stat(*filePath); err == nil {
+			sizeMB := float64(fileInfo.Size()) / 1024 / 1024
+			fmt.Printf("💾 大小: %.2f MB\n", sizeMB)
+		}
 	}
 	if *notes != "" {
 		fmt.Printf("📝 说明: %s\n", *notes)
@@ -150,8 +175,18 @@ func main() {
 	var sqlStatement string
 	var isUpdate bool
 
-	if useURLMode {
-		// URL模式：从本地文件计算MD5和大小，使用提供的URL
+	if isIOS && useURLMode {
+		// iOS URL模式：只需要URL，不需要本地文件
+		fmt.Println("\n🍎 [步骤 1/2] iOS平台 - 使用App Store/TestFlight链接...")
+		fileURL = *distributionURL
+		ossKey = ""
+		actualFileSize = 0  // iOS不需要文件大小
+		fileHash = ""       // iOS不需要MD5
+		fmt.Printf("✅ iOS版本信息已准备!\n")
+		fmt.Printf("   🌐 下载地址: %s\n", fileURL)
+		fmt.Println("   ℹ️  iOS通过App Store分发，无需文件大小和MD5")
+	} else if useURLMode {
+		// 非iOS URL模式：从本地文件计算MD5和大小，使用提供的URL
 		fmt.Println("\n🔗 [步骤 1/2] 计算本地文件MD5和大小...")
 		fileURL = *distributionURL
 		ossKey = ""
@@ -240,13 +275,14 @@ func main() {
 
 func printUsage() {
 	fmt.Println("用法:")
-	fmt.Println("  URL模式（推荐）: go run publish_version.go -platform <platform> -version <version> -url <download_url> -file <local_file> [options]")
-	fmt.Println("  OSS上传模式:     go run publish_version.go -platform <platform> -version <version> -file <file_path> [options]")
+	fmt.Println("  iOS平台:          go run publish_version.go -platform ios -version <version> -url <appstore_url> [options]")
+	fmt.Println("  URL模式（推荐）:  go run publish_version.go -platform <platform> -version <version> -url <download_url> -file <local_file> [options]")
+	fmt.Println("  OSS上传模式:      go run publish_version.go -platform <platform> -version <version> -file <file_path> [options]")
 	fmt.Println("\n必需参数:")
 	fmt.Println("  -platform    平台: windows, macos, linux, android, ios")
 	fmt.Println("  -version     版本号，如 1.0.0")
-	fmt.Println("  -file        本地升级包文件路径（用于计算MD5和文件大小）")
-	fmt.Println("  -url         下载地址URL（URL模式必需，已上传到图床的地址）")
+	fmt.Println("  -url         下载地址URL（iOS平台必需；其他平台URL模式必需）")
+	fmt.Println("  -file        本地升级包文件路径（iOS平台不需要；其他平台用于计算MD5和文件大小）")
 	fmt.Println("\n可选参数:")
 	fmt.Println("  -notes            升级说明")
 	fmt.Println("  -force            是否强制更新 (默认: false)")
@@ -257,7 +293,10 @@ func printUsage() {
 	fmt.Println("  -env              .env文件路径 (默认: ../.env)")
 	fmt.Println("  -show-sql         显示执行的SQL语句 (默认: true)")
 	fmt.Println("\n示例:")
-	fmt.Println("  # Windows - URL模式（推荐：已上传到图床）")
+	fmt.Println("  # iOS - 只需要App Store/TestFlight链接，不需要本地文件")
+	fmt.Println("  go run publish_version.go -platform ios -version 1.0.2 \\")
+	fmt.Println("    -url \"https://apps.apple.com/app/yourapp/id123456789\" -notes \"新功能\"")
+	fmt.Println("\n  # Windows - URL模式（推荐：已上传到图床）")
 	fmt.Println("  go run publish_version.go -platform windows -version 1.0.2 \\")
 	fmt.Println("    -url \"https://youdu-chat2.oss-cn-beijing.aliyuncs.com/1.0.2.zip\" \\")
 	fmt.Println("    -file \"C:\\build\\1.0.2.zip\" -notes \"修复bug\"")

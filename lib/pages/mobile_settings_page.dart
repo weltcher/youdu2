@@ -279,7 +279,7 @@ class _MobileSettingsPageState extends State<MobileSettingsPage> {
   void _showAboutDialog() {
     showDialog(
       context: context,
-      builder: (context) => _AboutDialog(currentVersion: _versionInfo),
+      builder: (context) => const _AboutDialog(),
     );
   }
 
@@ -302,18 +302,18 @@ class _MobileSettingsPageState extends State<MobileSettingsPage> {
 
 /// 关于对话框
 class _AboutDialog extends StatefulWidget {
-  final String currentVersion;
-
-  const _AboutDialog({required this.currentVersion});
+  const _AboutDialog();
 
   @override
   State<_AboutDialog> createState() => _AboutDialogState();
 }
 
 class _AboutDialogState extends State<_AboutDialog> {
+  bool _isLoadingVersion = true;
   bool _isChecking = true;
   bool _hasUpdate = false;
-  String _statusText = '已是最新版本。';
+  String _currentVersion = '加载中...';
+  String _statusText = '正在检查更新...';
   String? _newVersion;
   String? _releaseNotes;
   UpdateInfo? _updateInfo; // 保存完整的更新信息
@@ -321,7 +321,32 @@ class _AboutDialogState extends State<_AboutDialog> {
   @override
   void initState() {
     super.initState();
-    _checkForUpdate();
+    _loadVersionAndCheckUpdate();
+  }
+
+  /// 加载版本信息并检查更新（每次都实时查询接口）
+  Future<void> _loadVersionAndCheckUpdate() async {
+    // 1. 先实时查询当前版本
+    try {
+      final versionData = await UpdateService.getCurrentVersion();
+      final version = versionData['version'] ?? '未知';
+      if (mounted) {
+        setState(() {
+          _currentVersion = 'v$version';
+          _isLoadingVersion = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _currentVersion = 'v1.0.0';
+          _isLoadingVersion = false;
+        });
+      }
+    }
+
+    // 2. 再检查更新
+    await _checkForUpdate();
   }
 
   /// 检查更新
@@ -408,7 +433,7 @@ class _AboutDialogState extends State<_AboutDialog> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _buildInfoRow('版本', widget.currentVersion),
+          _buildInfoRow('版本', _currentVersion),
           const SizedBox(height: 24),
           if (_isChecking)
             const Row(
