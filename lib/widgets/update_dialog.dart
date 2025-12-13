@@ -59,6 +59,11 @@ class _UpdateDialogState extends State<UpdateDialog> {
   // 节流控制
   Timer? _progressTimer;
   double _pendingProgress = 0.0;
+  
+  // 下载速度计算
+  int _lastReceivedBytes = 0;
+  DateTime? _lastSpeedTime;
+  double _downloadSpeed = 0.0; // bytes per second
 
   @override
   void initState() {
@@ -86,6 +91,8 @@ class _UpdateDialogState extends State<UpdateDialog> {
     });
 
     // 启动定时器，每500ms更新一次进度（节流）
+    _lastSpeedTime = DateTime.now();
+    _lastReceivedBytes = 0;
     _progressTimer = Timer.periodic(const Duration(milliseconds: 500), (timer) {
       if (mounted && _pendingProgress != _progress) {
         setState(() {
@@ -104,8 +111,22 @@ class _UpdateDialogState extends State<UpdateDialog> {
           if (total > 0) {
             // 只更新待处理的进度值，不直接更新UI
             _pendingProgress = received / total;
+            
+            // 计算下载速度
+            final now = DateTime.now();
+            if (_lastSpeedTime != null) {
+              final elapsed = now.difference(_lastSpeedTime!).inMilliseconds;
+              if (elapsed >= 500) {
+                final bytesDownloaded = received - _lastReceivedBytes;
+                _downloadSpeed = bytesDownloaded / (elapsed / 1000);
+                _lastReceivedBytes = received;
+                _lastSpeedTime = now;
+              }
+            }
           }
         },
+        useChunkDownload: true,
+        concurrency: 8,
       );
 
       _progressTimer?.cancel();
@@ -260,6 +281,17 @@ class _UpdateDialogState extends State<UpdateDialog> {
     );
   }
 
+  /// 格式化下载速度
+  String _formatSpeed(double bytesPerSecond) {
+    if (bytesPerSecond < 1024) {
+      return '${bytesPerSecond.toStringAsFixed(0)} B/s';
+    } else if (bytesPerSecond < 1024 * 1024) {
+      return '${(bytesPerSecond / 1024).toStringAsFixed(1)} KB/s';
+    } else {
+      return '${(bytesPerSecond / 1024 / 1024).toStringAsFixed(1)} MB/s';
+    }
+  }
+
   Widget _buildDownloadProgress(AppLocalizations localizations) {
     // 未开始下载时不显示进度条
     if (!_isDownloading && !_downloadComplete && _errorMessage == null) {
@@ -271,11 +303,16 @@ class _UpdateDialogState extends State<UpdateDialog> {
     final totalMB = (widget.updateInfo.fileSize / 1024 / 1024).toStringAsFixed(2);
     
     String statusText;
+    String? speedText;
+    
     if (_isDownloading) {
       if (_usedCachedFile && _progress >= 1.0) {
         statusText = '使用已下载的文件';
       } else {
         statusText = '${localizations.translate('downloading')} $percent% ($downloadedMB MB / $totalMB MB)';
+        if (_downloadSpeed > 0) {
+          speedText = _formatSpeed(_downloadSpeed);
+        }
       }
     } else if (_downloadComplete) {
       if (_usedCachedFile) {
@@ -292,12 +329,27 @@ class _UpdateDialogState extends State<UpdateDialog> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          statusText,
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-            color: _errorMessage != null ? Colors.red : null,
-          ),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Expanded(
+              child: Text(
+                statusText,
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: _errorMessage != null ? Colors.red : null,
+                ),
+              ),
+            ),
+            if (speedText != null)
+              Text(
+                speedText,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.grey.shade600,
+                ),
+              ),
+          ],
         ),
         const SizedBox(height: 8),
         LinearProgressIndicator(

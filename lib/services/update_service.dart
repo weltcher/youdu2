@@ -12,6 +12,7 @@ import '../models/update_info.dart';
 import '../config/api_config.dart';
 import '../utils/logger.dart';
 import 'local_database_service.dart';
+import 'chunk_download_service.dart';
 
 /// 升级服务
 class UpdateService {
@@ -118,11 +119,18 @@ class UpdateService {
     }
   }
 
-  /// 下载更新包（完全静默，不影响主线程）
+  /// 分片下载服务实例
+  final ChunkDownloadService _chunkDownloadService = ChunkDownloadService();
+
+  /// 下载更新包（支持分片并行下载）
+  /// [useChunkDownload] 是否使用分片下载，默认true
+  /// [concurrency] 并行下载线程数，默认8
   Future<String?> downloadUpdate(
     UpdateInfo updateInfo,
-    Function(int received, int total)? onProgress,
-  ) async {
+    Function(int received, int total)? onProgress, {
+    bool useChunkDownload = true,
+    int concurrency = 8,
+  }) async {
     try {
       logger.info('📥 [下载更新] 开始下载: ${updateInfo.downloadUrl}');
       
@@ -135,46 +143,101 @@ class UpdateService {
       
       logger.debug('📦 [下载更新] 文件路径: $filePath');
 
-      // 如果文件已存在，直接返回（不校验MD5）
+      // 如果文件已存在且大小匹配，直接返回
       if (await file.exists()) {
-        logger.info('📦 [下载更新] 发现已下载的文件');
         final fileSize = await file.length();
-        logger.info('✅ [下载更新] 使用已下载的文件，跳过下载 (${(fileSize / 1024 / 1024).toStringAsFixed(2)} MB)');
-        // 通知进度为100%，让UI知道已经完成
-        onProgress?.call(updateInfo.fileSize, updateInfo.fileSize);
-        return filePath;
+        if (fileSize == updateInfo.fileSize || updateInfo.fileSize == 0) {
+          logger.info('📦 [下载更新] 发现已下载的文件');
+          logger.info('✅ [下载更新] 使用已下载的文件，跳过下载 (${(fileSize / 1024 / 1024).toStringAsFixed(2)} MB)');
+          onProgress?.call(updateInfo.fileSize, updateInfo.fileSize);
+          return filePath;
+        } else {
+          // 文件大小不匹配，删除重新下载
+          logger.warning('⚠️ [下载更新] 文件大小不匹配，重新下载');
+          await file.delete();
+        }
       }
 
-      logger.info('🌐 [下载更新] 开始HTTP请求...');
-      final request = http.Request('GET', Uri.parse(updateInfo.downloadUrl));
-      final response = await request.send();
-
-      if (response.statusCode != 200) {
-        logger.error('❌ [下载更新] HTTP错误: ${response.statusCode}');
-        throw Exception('服务器返回错误: HTTP ${response.statusCode}');
-      }
-
-      final contentLength = response.contentLength ?? updateInfo.fileSize;
-      logger.info('📊 [下载更新] 文件大小: ${(contentLength / 1024 / 1024).toStringAsFixed(2)} MB');
+      // 判断是否使用分片下载
+      // 条件：启用分片下载 && 文件大于5MB
+      final shouldUseChunk = useChunkDownload && updateInfo.fileSize > 5 * 1024 * 1024;
       
-      int received = 0;
-
-      final sink = file.openWrite();
-      await for (var chunk in response.stream) {
-        sink.add(chunk);
-        received += chunk.length;
-        // 调用进度回调（由调用方负责节流）
-        onProgress?.call(received, contentLength);
+      if (shouldUseChunk) {
+        logger.info('🚀 [下载更新] 使用分片并行下载 (${concurrency}线程)');
+        return await _chunkDownload(updateInfo, filePath, onProgress, concurrency);
+      } else {
+        logger.info('🌐 [下载更新] 使用普通下载');
+        return await _normalDownload(updateInfo, filePath, onProgress);
       }
-      await sink.close();
-      
-      logger.info('✅ [下载更新] 下载完成: $filePath');
-      return filePath;
     } catch (e) {
       logger.error('❌ [下载更新] 下载失败: $e');
-      // 重新抛出异常，让调用方知道具体的错误信息
       rethrow;
     }
+  }
+
+  /// 分片并行下载
+  Future<String?> _chunkDownload(
+    UpdateInfo updateInfo,
+    String filePath,
+    Function(int received, int total)? onProgress,
+    int concurrency,
+  ) async {
+    final config = ChunkDownloadConfig(
+      concurrency: concurrency,
+      chunkSize: 2 * 1024 * 1024, // 2MB per chunk
+      maxRetries: 3,
+    );
+
+    final result = await _chunkDownloadService.download(
+      url: updateInfo.downloadUrl,
+      savePath: filePath,
+      config: config,
+      expectedMd5: updateInfo.md5.isNotEmpty ? updateInfo.md5 : null,
+      onProgress: (progress) {
+        onProgress?.call(progress.downloadedBytes, progress.totalBytes);
+      },
+    );
+
+    return result;
+  }
+
+  /// 普通单线程下载
+  Future<String?> _normalDownload(
+    UpdateInfo updateInfo,
+    String filePath,
+    Function(int received, int total)? onProgress,
+  ) async {
+    logger.info('🌐 [下载更新] 开始HTTP请求...');
+    final request = http.Request('GET', Uri.parse(updateInfo.downloadUrl));
+    final response = await request.send();
+
+    if (response.statusCode != 200) {
+      logger.error('❌ [下载更新] HTTP错误: ${response.statusCode}');
+      throw Exception('服务器返回错误: HTTP ${response.statusCode}');
+    }
+
+    final contentLength = response.contentLength ?? updateInfo.fileSize;
+    logger.info('📊 [下载更新] 文件大小: ${(contentLength / 1024 / 1024).toStringAsFixed(2)} MB');
+    
+    int received = 0;
+    final file = File(filePath);
+    final sink = file.openWrite();
+    
+    await for (var chunk in response.stream) {
+      sink.add(chunk);
+      received += chunk.length;
+      onProgress?.call(received, contentLength);
+    }
+    await sink.close();
+    
+    logger.info('✅ [下载更新] 下载完成: $filePath');
+    return filePath;
+  }
+
+  /// 取消下载
+  void cancelDownload() {
+    _chunkDownloadService.cancel();
+    logger.info('🛑 [下载更新] 下载已取消');
   }
 
   /// 获取下载目录
