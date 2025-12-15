@@ -18,6 +18,13 @@ server {
     index index.html index.htm;
 
     location / {
+        # 禁止 nginx 缓存
+        proxy_cache off;
+
+        # 禁止浏览器缓存
+        add_header Cache-Control "no-store, no-cache, must-revalidate, proxy-revalidate";
+        add_header Pragma "no-cache";
+        add_header Expires 0;
         try_files $uri $uri/ =404;
     }
 }
