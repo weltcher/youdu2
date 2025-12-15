@@ -13,8 +13,9 @@ import 'mobile_home_page.dart';
 
 class LoginPage extends StatefulWidget {
   final bool clearCredentials; // 是否清空保存的账号密码
+  final String? prefillAccount; // 预填充的账号（用于切换账号时）
   
-  const LoginPage({super.key, this.clearCredentials = false});
+  const LoginPage({super.key, this.clearCredentials = false, this.prefillAccount});
 
   @override
   State<LoginPage> createState() => _LoginPageState();
@@ -76,6 +77,14 @@ class _LoginPageState extends State<LoginPage> {
         _verifyCodeController.clear();
       });
       return;
+    }
+    
+    // 如果有预填充的账号，先填充
+    if (widget.prefillAccount != null && widget.prefillAccount!.isNotEmpty) {
+      logger.debug('📝 预填充账号: ${widget.prefillAccount}');
+      setState(() {
+        _accountController.text = widget.prefillAccount!;
+      });
     }
     
     // 获取最近一次登录的用户ID

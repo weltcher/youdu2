@@ -140,6 +140,14 @@ class Storage {
     }
     // 保存最近一次登录的用户ID
     await saveLastLoggedInUserId(userId);
+    
+    // 🔴 添加到已登录账号列表（用于多账号切换）
+    await addLoggedInAccount(
+      userId: userId,
+      username: username,
+      fullName: fullName,
+      avatar: avatar,
+    );
   }
 
   /// 保存最近一次登录的用户ID
@@ -977,4 +985,150 @@ class Storage {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getBool(key);
   }
+
+  // ============ 多账号管理（已登录账号列表） ============
+
+  static const String _loggedInAccountsKey = 'logged_in_accounts';
+
+  /// 已登录账号信息模型
+  static Map<String, dynamic> _createAccountInfo({
+    required int userId,
+    required String username,
+    String? fullName,
+    String? avatar,
+  }) {
+    return {
+      'userId': userId,
+      'username': username,
+      'fullName': fullName,
+      'avatar': avatar,
+      'lastLoginTime': DateTime.now().millisecondsSinceEpoch,
+    };
+  }
+
+  /// 添加或更新已登录账号
+  static Future<void> addLoggedInAccount({
+    required int userId,
+    required String username,
+    String? fullName,
+    String? avatar,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    final jsonString = prefs.getString(_loggedInAccountsKey);
+    
+    List<Map<String, dynamic>> accounts = [];
+    if (jsonString != null && jsonString.isNotEmpty) {
+      try {
+        final List<dynamic> jsonList = jsonDecode(jsonString);
+        accounts = jsonList.map((e) => Map<String, dynamic>.from(e)).toList();
+      } catch (e) {
+        logger.debug('解析已登录账号列表失败: $e');
+      }
+    }
+
+    // 检查是否已存在该账号
+    final existingIndex = accounts.indexWhere((a) => a['userId'] == userId);
+    final accountInfo = _createAccountInfo(
+      userId: userId,
+      username: username,
+      fullName: fullName,
+      avatar: avatar,
+    );
+
+    if (existingIndex != -1) {
+      // 更新已存在的账号信息
+      accounts[existingIndex] = accountInfo;
+    } else {
+      // 添加新账号
+      accounts.insert(0, accountInfo);
+    }
+
+    // 最多保存10个账号
+    if (accounts.length > 10) {
+      accounts = accounts.sublist(0, 10);
+    }
+
+    await prefs.setString(_loggedInAccountsKey, jsonEncode(accounts));
+    logger.debug('💾 已添加/更新登录账号: userId=$userId, username=$username');
+  }
+
+  /// 获取已登录账号列表
+  static Future<List<LoggedInAccountInfo>> getLoggedInAccounts() async {
+    final prefs = await SharedPreferences.getInstance();
+    final jsonString = prefs.getString(_loggedInAccountsKey);
+    
+    if (jsonString == null || jsonString.isEmpty) {
+      return [];
+    }
+
+    try {
+      final List<dynamic> jsonList = jsonDecode(jsonString);
+      return jsonList.map((json) => LoggedInAccountInfo.fromJson(Map<String, dynamic>.from(json))).toList();
+    } catch (e) {
+      logger.debug('解析已登录账号列表失败: $e');
+      return [];
+    }
+  }
+
+  /// 移除已登录账号
+  static Future<void> removeLoggedInAccount(int userId) async {
+    final prefs = await SharedPreferences.getInstance();
+    final jsonString = prefs.getString(_loggedInAccountsKey);
+    
+    if (jsonString == null || jsonString.isEmpty) {
+      return;
+    }
+
+    try {
+      final List<dynamic> jsonList = jsonDecode(jsonString);
+      final accounts = jsonList.map((e) => Map<String, dynamic>.from(e)).toList();
+      accounts.removeWhere((a) => a['userId'] == userId);
+      await prefs.setString(_loggedInAccountsKey, jsonEncode(accounts));
+      logger.debug('🗑️ 已移除登录账号: userId=$userId');
+    } catch (e) {
+      logger.debug('移除已登录账号失败: $e');
+    }
+  }
+
+  /// 清空所有已登录账号
+  static Future<void> clearAllLoggedInAccounts() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_loggedInAccountsKey);
+    logger.debug('🗑️ 已清空所有登录账号');
+  }
+}
+
+/// 已登录账号信息
+class LoggedInAccountInfo {
+  final int userId;
+  final String username;
+  final String? fullName;
+  final String? avatar;
+  final int? lastLoginTime;
+
+  LoggedInAccountInfo({
+    required this.userId,
+    required this.username,
+    this.fullName,
+    this.avatar,
+    this.lastLoginTime,
+  });
+
+  factory LoggedInAccountInfo.fromJson(Map<String, dynamic> json) {
+    return LoggedInAccountInfo(
+      userId: json['userId'] as int,
+      username: json['username'] as String,
+      fullName: json['fullName'] as String?,
+      avatar: json['avatar'] as String?,
+      lastLoginTime: json['lastLoginTime'] as int?,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'userId': userId,
+    'username': username,
+    'fullName': fullName,
+    'avatar': avatar,
+    'lastLoginTime': lastLoginTime,
+  };
 }

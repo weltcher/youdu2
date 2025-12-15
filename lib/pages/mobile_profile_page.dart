@@ -13,8 +13,11 @@ import 'mobile_profile_edit_page.dart';
 import 'mobile_favorites_page.dart';
 import 'mobile_settings_page.dart';
 import 'mobile_chat_page.dart';
+import 'mobile_contacts_page.dart';
+import 'mobile_home_page.dart';
 import 'my_qr_code_page.dart';
 import 'login_page.dart';
+import 'account_switch_page.dart';
 
 /// 移动端"我的"页面
 class MobileProfilePage extends StatefulWidget {
@@ -149,50 +152,14 @@ class _MobileProfilePageState extends State<MobileProfilePage> {
     }
   }
 
-  // 切换账号
-  void _handleSwitchAccount() async {
-    try {
-      // 先设置用户状态为离线
-      final token = widget.token;
-      if (token != null) {
-        try {
-          await ApiService.updateStatus(token: token, status: 'offline');
-          logger.debug('✅ 用户状态已设置为离线');
-        } catch (e) {
-          logger.debug('⚠️ 设置离线状态失败: $e');
-          // 即使设置状态失败也继续切换账号流程
-        }
-      }
-
-      // 🔴 断开WebSocket连接（非常重要！避免使用旧用户的token）
-      logger.debug('🔌 开始断开WebSocket连接...');
-      await WebSocketService().disconnect(sendOfflineStatus: false);
-      logger.debug('✅ WebSocket连接已断开');
-
-      // 清除登录信息（token、userId、username）
-      // 先获取当前用户ID，用于清除该用户的保存密码
-      final currentUserId = await Storage.getUserId();
-      await Storage.clearLoginInfo();
-
-      // 移动端：清除保存的账号密码，这样下次打开应用会进入登录页面
-      if (currentUserId != null) {
-        await Storage.clearSavedCredentials(currentUserId);
-        logger.debug('✅ 已清除保存的账号密码');
-      }
-
-      // 重置升级检查器，以便新账号登录后重新检查更新
-      UpdateChecker().reset();
-      logger.debug('🔄 已重置升级检查器');
-
-      if (mounted) {
-        Navigator.of(context).pushAndRemoveUntil(
-          MaterialPageRoute(builder: (context) => const LoginPage(clearCredentials: true)),
-          (route) => false,
-        );
-      }
-    } catch (e) {
-      logger.error('切换账号失败: $e');
-    }
+  // 切换账号 - 跳转到账号切换页面
+  void _handleSwitchAccount() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => AccountSwitchPage(currentToken: widget.token),
+      ),
+    );
   }
 
   // 打开文件传输助手
@@ -288,7 +255,7 @@ class _MobileProfilePageState extends State<MobileProfilePage> {
     }
   }
 
-  // 登出（退出应用）
+  // 登出 - 清理用户数据并跳转到登录页面
   void _handleLogout() async {
     try {
       // 先设置用户状态为离线
@@ -319,9 +286,23 @@ class _MobileProfilePageState extends State<MobileProfilePage> {
         logger.debug('✅ 已清除保存的账号密码');
       }
 
-      // 关闭应用
+      // 重置升级检查器
+      UpdateChecker().reset();
+      logger.debug('🔄 已重置升级检查器');
+
+      // 🔴 清除所有本地缓存
+      logger.info('🗑️ 登出，开始清除所有本地缓存...');
+      MobileChatPage.clearAllCache();
+      MobileContactsPage.clearAllCache();
+      MobileHomePage.clearAllCache();
+      logger.info('✅ 所有本地缓存已清除');
+
+      // 跳转到登录页面
       if (mounted) {
-        SystemNavigator.pop();
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (context) => const LoginPage(clearCredentials: true)),
+          (route) => false,
+        );
       }
     } catch (e) {
       logger.error('登出失败: $e');
