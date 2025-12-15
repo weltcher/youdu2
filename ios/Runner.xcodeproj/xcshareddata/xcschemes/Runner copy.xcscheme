@@ -15,9 +15,9 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "40BEF6FE2EEFC8B00040F229"
-               BuildableName = "Runner copy.app"
-               BlueprintName = "Runner copy"
+               BlueprintIdentifier = "40D771A12EF051C5003C84C5"
+               BuildableName = "Runner-simulator.app"
+               BlueprintName = "Runner-simulator"
                ReferencedContainer = "container:Runner.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
@@ -44,9 +44,9 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "40BEF6FE2EEFC8B00040F229"
-            BuildableName = "Runner copy.app"
-            BlueprintName = "Runner copy"
+            BlueprintIdentifier = "40D771A12EF051C5003C84C5"
+            BuildableName = "Runner-simulator.app"
+            BlueprintName = "Runner-simulator"
             ReferencedContainer = "container:Runner.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
@@ -61,21 +61,12 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "40BEF6FE2EEFC8B00040F229"
-            BuildableName = "Runner copy.app"
-            BlueprintName = "Runner copy"
+            BlueprintIdentifier = "40D771A12EF051C5003C84C5"
+            BuildableName = "Runner-simulator.app"
+            BlueprintName = "Runner-simulator"
             ReferencedContainer = "container:Runner.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
-      <MacroExpansion>
-         <BuildableReference
-            BuildableIdentifier = "primary"
-            BlueprintIdentifier = "40BEF6FE2EEFC8B00040F229"
-            BuildableName = "Runner copy.app"
-            BlueprintName = "Runner copy"
-            ReferencedContainer = "container:Runner.xcodeproj">
-         </BuildableReference>
-      </MacroExpansion>
    </ProfileAction>
    <AnalyzeAction
       buildConfiguration = "Debug">

@@ -4408,6 +4408,21 @@ class _MobileChatListPageState extends State<MobileChatListPage> {
               '📧 点击联系人 ${contact.displayName}，未读消息数: ${contact.unreadCount}',
             );
 
+            // 🔴 立即清除UI上的未读计数（点击即清除红色气泡）
+            if (contact.unreadCount > 0) {
+              final contactIndex = _recentContacts.indexWhere((c) => 
+                c.userId == contact.userId && c.type == contact.type);
+              if (contactIndex != -1 && mounted) {
+                setState(() {
+                  _recentContacts[contactIndex] = _recentContacts[contactIndex].copyWith(
+                    unreadCount: 0,
+                    hasMentionedMe: false,
+                  );
+                });
+                logger.debug('✅ 已清除联系人 ${contact.displayName} 的未读计数');
+              }
+            }
+
             // 文件传输助手特殊处理
             if (contact.type == 'file_assistant') {
               try {
