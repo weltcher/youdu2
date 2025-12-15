@@ -4,7 +4,6 @@ import (
 	"time"
 	"youdu-server/config"
 	"youdu-server/db"
-	"youdu-server/models"
 	"youdu-server/routes"
 	"youdu-server/utils"
 	ws "youdu-server/websocket"
@@ -35,23 +34,23 @@ func main() {
 	defer db.CloseDB()
 	utils.LogInfo("✅ 数据库连接成功")
 
-	// 初始化Redis
-	if err := utils.InitRedis(
-		config.AppConfig.RedisHost,
-		config.AppConfig.RedisPort,
-		config.AppConfig.RedisPassword,
-		config.AppConfig.RedisDB,
-	); err != nil {
-		utils.LogFatal("Redis连接失败: %v", err)
-	}
-	utils.LogInfo("✅ Redis连接成功")
+	// 初始化Redis - 已禁用
+	// if err := utils.InitRedis(
+	// 	config.AppConfig.RedisHost,
+	// 	config.AppConfig.RedisPort,
+	// 	config.AppConfig.RedisPassword,
+	// 	config.AppConfig.RedisDB,
+	// ); err != nil {
+	// 	utils.LogFatal("Redis连接失败: %v", err)
+	// }
+	// utils.LogInfo("✅ Redis连接成功")
 
-	// 加载已解散的群组到内存
-	disbandedManager := models.GetDisbandedGroupsManager()
-	if err := disbandedManager.LoadDisbandedGroups(); err != nil {
-		utils.LogFatal("加载已解散群组失败: %v", err)
-	}
-	utils.LogInfo("✅ 已解散群组管理器初始化成功")
+	// 加载已解散的群组到内存 - 暂时禁用（groups表不存在）
+	// disbandedManager := models.GetDisbandedGroupsManager()
+	// if err := disbandedManager.LoadDisbandedGroups(); err != nil {
+	// 	utils.LogFatal("加载已解散群组失败: %v", err)
+	// }
+	// utils.LogInfo("✅ 已解散群组管理器初始化成功")
 
 	// 创建并启动WebSocket Hub
 	hub := ws.NewHub()

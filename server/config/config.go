@@ -43,11 +43,11 @@ type Config struct {
 	AgoraAppID          string
 	AgoraAppCertificate string
 
-	// Redis
-	RedisHost     string
-	RedisPort     string
-	RedisPassword string
-	RedisDB       int
+	// Redis - 已禁用
+	// RedisHost     string
+	// RedisPort     string
+	// RedisPassword string
+	// RedisDB       int
 
 	// OSS/S3 (根据环境自动选择)
 	S3Endpoint  string
@@ -73,7 +73,7 @@ func LoadConfig() {
 	}
 
 	verifyExpire, _ := strconv.Atoi(getEnvViper("VERIFY_CODE_EXPIRE_MINUTES", "5"))
-	redisDB, _ := strconv.Atoi(getEnvViper("REDIS_DB", "0"))
+	// redisDB, _ := strconv.Atoi(getEnvViper("REDIS_DB", "0")) // Redis已禁用
 
 	// 获取应用环境
 	appEnv := getEnvViper("APP_ENV", "development")
@@ -126,10 +126,10 @@ func LoadConfig() {
 		AppEnv:                  appEnv,
 		AgoraAppID:              getEnvViper("AGORA_APP_ID", ""),
 		AgoraAppCertificate:     getEnvViper("AGORA_APP_CERTIFICATE", ""),
-		RedisHost:               getEnvViper("REDIS_HOST", "127.0.0.1"),
-		RedisPort:               getEnvViper("REDIS_PORT", "6379"),
-		RedisPassword:           getEnvViper("REDIS_PASSWORD", ""),
-		RedisDB:                 redisDB,
+		// RedisHost:               getEnvViper("REDIS_HOST", "127.0.0.1"),
+		// RedisPort:               getEnvViper("REDIS_PORT", "6379"),
+		// RedisPassword:           getEnvViper("REDIS_PASSWORD", ""),
+		// RedisDB:                 redisDB,
 		S3Endpoint:              s3Endpoint,
 		S3AccessKey:             s3AccessKey,
 		S3SecretKey:             s3SecretKey,

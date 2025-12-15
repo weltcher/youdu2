@@ -1,5 +1,9 @@
 package utils
 
+// Redis 功能已禁用
+// 所有验证码存储已改为使用数据库
+
+/*
 import (
 	"context"
 	"fmt"
@@ -76,3 +80,4 @@ func CheckLoginSMSCodeExists(phone string) bool {
 	}
 	return exists > 0
 }
+*/

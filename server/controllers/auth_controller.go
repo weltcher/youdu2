@@ -223,53 +223,54 @@ func (ctrl *AuthController) SendVerificationCode(c *gin.Context) {
 
 	// 生成6位纯数字验证码
 	code := utils.GenerateVerificationCode(6)
-	expiresAt := time.Now().Add(120 * time.Second) // 验证码有效期120秒
 
-	// 如果是登录类型，使用Redis存储验证码并发送短信
+	// 所有类型（register, login, reset）统一使用数据库存储
+	// Redis相关代码已禁用
+	expiresAt := time.Now().Add(time.Duration(config.AppConfig.VerifyCodeExpireMinutes) * time.Minute)
+	
+	// 如果是登录类型，验证手机号格式并发送短信
 	if req.Type == "login" {
-		// 验证手机号格式
 		if !utils.IsValidPhoneNumber(req.Account) {
 			utils.BadRequest(c, "请输入正确的手机号格式")
 			return
 		}
-
-		// 保存验证码到Redis（key: login-sms-{手机号}，有效期60秒）
-		err := utils.SetLoginSMSCode(req.Account, code)
+		
+		// 保存验证码到数据库
+		err := ctrl.codeRepo.Create(req.Account, code, req.Type, expiresAt)
 		if err != nil {
-			utils.LogDebug("保存验证码到Redis失败: %v", err)
+			utils.LogDebug("保存验证码失败: %v", err)
 			utils.InternalServerError(c, "发送验证码失败")
 			return
 		}
-
+		
 		// 发送短信
 		err = utils.SendLoginSMS(req.Account, code)
 		if err != nil {
 			utils.LogDebug("发送短信失败: %v", err)
-			// 短信发送失败时，删除Redis中的验证码
-			utils.DeleteLoginSMSCode(req.Account)
+			// 短信发送失败时，删除数据库中的验证码
+			ctrl.codeRepo.DeleteByAccount(req.Account, req.Type)
 			utils.InternalServerError(c, "短信发送失败，请稍后重试")
 			return
 		}
 
-		utils.LogDebug("✅ 登录验证码已发送: %s (手机号: %s, 有效期: 120秒)", code, req.Account)
+		utils.LogDebug("✅ 登录验证码已发送: %s (手机号: %s, 有效期: %d分钟)", code, req.Account, config.AppConfig.VerifyCodeExpireMinutes)
 
 		// 开发环境下返回验证码，生产环境应删除
 		if config.AppConfig.AppEnv == "development" {
-			utils.SuccessWithMessage(c, "验证码已发送，有效期120秒", gin.H{
+			utils.SuccessWithMessage(c, "验证码已发送", gin.H{
 				"code":       code,
 				"expires_at": expiresAt,
 			})
 		} else {
-			utils.SuccessWithMessage(c, "验证码已发送，有效期120秒", gin.H{
+			utils.SuccessWithMessage(c, "验证码已发送", gin.H{
 				"expires_at": expiresAt,
 			})
 		}
 		return
 	}
 
-	// 其他类型（register, reset）仍使用数据库存储
-	expiresAtDB := time.Now().Add(time.Duration(config.AppConfig.VerifyCodeExpireMinutes) * time.Minute)
-	err := ctrl.codeRepo.Create(req.Account, code, req.Type, expiresAtDB)
+	// 其他类型（register, reset）使用数据库存储
+	err := ctrl.codeRepo.Create(req.Account, code, req.Type, expiresAt)
 	if err != nil {
 		utils.LogDebug("保存验证码失败: %v", err)
 		utils.InternalServerError(c, "发送验证码失败")
@@ -280,7 +281,7 @@ func (ctrl *AuthController) SendVerificationCode(c *gin.Context) {
 
 	utils.SuccessWithMessage(c, "验证码已发送", gin.H{
 		"code":       code, // 生产环境应删除此行
-		"expires_at": expiresAtDB,
+		"expires_at": expiresAt,
 	})
 }
 
@@ -316,23 +317,20 @@ func (ctrl *AuthController) VerifyCodeLogin(c *gin.Context) {
 		return
 	}
 
-	// 从Redis获取验证码
-	storedCode, err := utils.GetLoginSMSCode(req.Account)
+	// 从数据库验证验证码（Redis已禁用）
+	valid, err := ctrl.codeRepo.Verify(req.Account, req.Code, "login")
 	if err != nil {
-		utils.LogDebug("获取验证码失败: %v", err)
-		utils.BadRequest(c, "验证码已过期，请重新获取")
+		utils.LogDebug("验证验证码失败: %v", err)
+		utils.InternalServerError(c, "服务器错误")
+		return
+	}
+	if !valid {
+		utils.BadRequest(c, "验证码错误或已过期")
 		return
 	}
 
-	// 验证验证码是否匹配
-	if storedCode != req.Code {
-		utils.LogDebug("验证码不匹配: 输入=%s, 存储=%s", req.Code, storedCode)
-		utils.BadRequest(c, "验证码错误")
-		return
-	}
-
-	// 验证成功，删除Redis中的验证码
-	utils.DeleteLoginSMSCode(req.Account)
+	// 验证成功，删除数据库中的验证码
+	ctrl.codeRepo.DeleteByAccount(req.Account, "login")
 
 	// 生成token
 	token, err := utils.GenerateToken(user.ID, user.Username)

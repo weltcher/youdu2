@@ -6,7 +6,7 @@ class ApiConfig {
   // 🔥 自动根据debug/release模式切换服务器地址和协议
   // Debug模式: 使用本地服务器 192.168.1.6 (HTTP 8080/8081)
   // Release模式: 使用生产服务器 www.xn--wxtp0q.com (HTTPS 8080/8081)
-  static final String defaultHost = kDebugMode ? '192.168.1.6' : 'www.xn--wxtp0q.com';
+  static final String defaultHost = kDebugMode ? '192.168.1.20' : 'www.xn--wxtp0q.com';
   
   // 端口配置：统一使用 8080/8081
   static const String defaultPort = '8080';
