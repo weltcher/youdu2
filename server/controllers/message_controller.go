@@ -57,25 +57,29 @@ func (mc *MessageController) HandleWebSocket(c *gin.Context) {
 	}
 
 	if token == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "未提供token"})
+		utils.LogDebug("❌ [WebSocket] 未提供token")
+		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "未提供token"})
 		return
 	}
 
 	// 验证token
 	claims, err := utils.ParseToken(token)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "无效的token"})
+		utils.LogDebug("❌ [WebSocket] token验证失败: %v, token: %s", err, token[:20]+"...")
+		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "无效的token"})
 		return
 	}
 
 	userID := claims.UserID
+	utils.LogDebug("✅ [WebSocket] token验证成功 - UserID: %d", userID)
 
 	// 升级HTTP连接为WebSocket
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
-		utils.LogDebug("WebSocket升级失败: %v", err)
+		utils.LogDebug("❌ [WebSocket] 升级失败: %v", err)
 		return
 	}
+	utils.LogDebug("✅ [WebSocket] 连接升级成功 - UserID: %d", userID)
 
 	// 创建客户端
 	wsConn := ws.NewConn(conn)

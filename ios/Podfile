@@ -55,5 +55,22 @@ end
 post_install do |installer|
   installer.pods_project.targets.each do |target|
     flutter_additional_ios_build_settings(target)
+    
+    # 启用 permission_handler 需要的权限
+    target.build_configurations.each do |config|
+      config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] ||= [
+        '$(inherited)',
+        # 相机权限
+        'PERMISSION_CAMERA=1',
+        # 麦克风权限
+        'PERMISSION_MICROPHONE=1',
+        # 照片库权限
+        'PERMISSION_PHOTOS=1',
+        # 通知权限
+        'PERMISSION_NOTIFICATIONS=1',
+        # 位置权限（如果需要）
+        # 'PERMISSION_LOCATION=1',
+      ]
+    end
   end
 end

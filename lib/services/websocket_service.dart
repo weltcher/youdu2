@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:web_socket_channel/status.dart' as status;
 import '../utils/storage.dart';
@@ -67,6 +68,11 @@ class WebSocketService {
 
       // 使用配置的WebSocket服务器地址和独立端口
       final wsUrl = '${ApiConfig.wsBaseUrl}/ws?token=$_token';
+      logger.debug('🔌 [WebSocket] 连接URL: $wsUrl');
+      logger.debug('🔌 [WebSocket] wsBaseUrl: ${ApiConfig.wsBaseUrl}');
+      logger.debug('🔌 [WebSocket] wsProtocol: ${ApiConfig.wsProtocol}');
+      logger.debug('🔌 [WebSocket] useHttps: ${ApiConfig.useHttps}');
+      logger.debug('🔌 [WebSocket] kDebugMode: $kDebugMode');
 
       _channel = WebSocketChannel.connect(Uri.parse(wsUrl));
 

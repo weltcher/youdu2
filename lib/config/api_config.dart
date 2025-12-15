@@ -9,8 +9,8 @@ class ApiConfig {
   static final String defaultHost = kDebugMode ? '192.168.1.20' : 'www.xn--wxtp0q.com';
   
   // 端口配置：统一使用 8080/8081
-  static const String defaultPort = '8080';
-  static const String defaultWSPort = '8081';
+  static const String defaultPort = '8180';
+  static const String defaultWSPort = '8181';
   
   // HTTPS 配置：仅生产环境启用HTTPS，开发环境使用HTTP
   static final bool useHttps = !kDebugMode;
@@ -39,7 +39,11 @@ class ApiConfig {
   static String get baseUrl => '$protocol://$_currentHost:$_currentPort';
 
   /// 获取完整的 WebSocket URL
-  static String get wsBaseUrl => '$wsProtocol://$_currentHost:$_currentWSPort';
+  /// 注意：必须使用 ws:// 或 wss:// 协议，不能使用 http:// 或 https://
+  static String get wsBaseUrl {
+    final wsProto = useHttps ? 'wss' : 'ws';
+    return '$wsProto://$_currentHost:$_currentWSPort';
+  }
 
   /// 设置服务器地址
   static void setServer(String host, String port, {String? wsPort}) {

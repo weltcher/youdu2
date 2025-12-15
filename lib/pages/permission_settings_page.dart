@@ -50,6 +50,7 @@ class _PermissionSettingsPageState extends State<PermissionSettingsPage>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // 只检查权限状态，不主动请求
     _checkAllPermissions();
   }
 
@@ -304,12 +305,6 @@ class _PermissionSettingsPageState extends State<PermissionSettingsPage>
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text('$permissionName权限被拒绝，请在系统设置中手动开启'),
-        action: SnackBarAction(
-          label: '去设置',
-          onPressed: () {
-            openAppSettings();
-          },
-        ),
       ),
     );
   }
@@ -386,6 +381,33 @@ class _PermissionSettingsPageState extends State<PermissionSettingsPage>
             ),
           ),
           const SizedBox(height: 8),
+          // 权限说明提示
+          Container(
+            color: Colors.blue.withOpacity(0.05),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(
+                  Icons.info_outline,
+                  size: 18,
+                  color: Colors.blue[700],
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    '点击下方权限开关可以跳转到系统设置页面进行管理。如果某些权限未显示，请先在应用中使用相关功能。',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: Colors.blue[900],
+                      height: 1.4,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 8),
           // 权限列表
           Expanded(
             child: ListView.builder(
@@ -454,6 +476,7 @@ class _PermissionSettingsPageState extends State<PermissionSettingsPage>
               },
             ),
           ),
+
         ],
       ),
     );

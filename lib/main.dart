@@ -8,10 +8,12 @@ import 'pages/home_page.dart';
 import 'utils/app_localizations.dart';
 import 'utils/storage.dart';
 import 'utils/logger.dart';
+import 'config/api_config.dart';
 import 'services/local_database_service.dart';
 import 'services/notification_service.dart';
 import 'services/api_service.dart';
 import 'services/update_service.dart';
+import 'services/permission_service.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 /// HTTPS 证书信任配置（仅开发环境）
@@ -105,6 +107,14 @@ void main() async {
   await logger.init();
   logger.info('========== 应用启动 ==========');
   logger.info('🆔 进程ID: $pid');
+  
+  // 🔍 调试：输出 API 配置信息
+  logger.debug('🔧 [API配置] kDebugMode: $kDebugMode');
+  logger.debug('🔧 [API配置] useHttps: ${ApiConfig.useHttps}');
+  logger.debug('🔧 [API配置] protocol: ${ApiConfig.protocol}');
+  logger.debug('🔧 [API配置] wsProtocol: ${ApiConfig.wsProtocol}');
+  logger.debug('🔧 [API配置] baseUrl: ${ApiConfig.baseUrl}');
+  logger.debug('🔧 [API配置] wsBaseUrl: ${ApiConfig.wsBaseUrl}');
 
   // 初始化本地数据库
   try {
@@ -281,7 +291,33 @@ class _InitialRouteCheckerState extends State<_InitialRouteChecker> {
   @override
   void initState() {
     super.initState();
+    _initializeApp();
+  }
+
+  /// 初始化应用（请求权限 + 检查登录状态）
+  Future<void> _initializeApp() async {
+    // 🔍 第一步：先检查登录状态并跳转页面
+    // 这样用户可以先看到界面，权限请求在后台进行
     _checkLoginStatus();
+
+    // 🔐 第二步：在移动端请求必要的权限
+    // 延迟执行，确保页面已经渲染完成
+    if (Platform.isAndroid || Platform.isIOS) {
+      try {
+        logger.info('📱 移动端应用，准备请求权限...');
+        // 等待页面完全加载后再请求权限
+        await Future.delayed(const Duration(milliseconds: 500));
+        if (mounted) {
+          logger.info('📱 开始请求权限...');
+          // 异步执行权限请求，不阻塞UI
+          PermissionService().requestInitialPermissions(context).catchError((e) {
+            logger.error('❌ 请求权限失败: $e');
+          });
+        }
+      } catch (e) {
+        logger.error('❌ 请求权限失败: $e');
+      }
+    }
   }
 
   /// 检查登录状态和自动登录配置
