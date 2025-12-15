@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"time"
 	"youdu-server/config"
 	"youdu-server/db"
@@ -10,6 +11,10 @@ import (
 )
 
 func main() {
+	// 解析命令行参数
+	debugMode := flag.Bool("debug", false, "启用调试模式，使用 .env.development 配置文件")
+	flag.Parse()
+
 	// 初始化日志系统
 	logFile, err := utils.InitLogger("logs")
 	if err != nil {
@@ -19,12 +24,16 @@ func main() {
 	defer logFile.Close()
 
 	// 设置日志级别（可选，默认为INFO）
-	utils.SetLogLevel(utils.DEBUG) // 开发环境开启DEBUG日志
-
-	utils.LogInfo("========== 应用启动 ==========")
+	if *debugMode {
+		utils.SetLogLevel(utils.DEBUG) // 调试模式开启DEBUG日志
+		utils.LogInfo("========== 应用启动 (调试模式) ==========")
+	} else {
+		utils.SetLogLevel(utils.INFO) // 生产模式使用INFO日志
+		utils.LogInfo("========== 应用启动 (生产模式) ==========")
+	}
 
 	// 加载配置
-	config.LoadConfig()
+	config.LoadConfig(*debugMode)
 	utils.LogInfo("✅ 配置加载成功")
 
 	// 初始化数据库

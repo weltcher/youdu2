@@ -59,9 +59,19 @@ type Config struct {
 var AppConfig *Config
 
 // LoadConfig 加载配置
-func LoadConfig() {
+func LoadConfig(debugMode bool) {
+	// 根据调试模式选择配置文件
+	var configFile string
+	if debugMode {
+		configFile = ".env.development"
+		fmt.Println("🔧 调试模式: 使用 .env.development 配置文件")
+	} else {
+		configFile = ".env"
+		fmt.Println("🚀 生产模式: 使用 .env 配置文件")
+	}
+
 	// 设置配置文件
-	viper.SetConfigFile(".env")
+	viper.SetConfigFile(configFile)
 	viper.SetConfigType("env")
 
 	// 自动读取环境变量
@@ -69,7 +79,7 @@ func LoadConfig() {
 
 	// 读取配置文件（如果存在）
 	if err := viper.ReadInConfig(); err != nil {
-		fmt.Println("Warning: .env file not found, using environment variables")
+		fmt.Printf("Warning: %s file not found, using environment variables\n", configFile)
 	}
 
 	verifyExpire, _ := strconv.Atoi(getEnvViper("VERIFY_CODE_EXPIRE_MINUTES", "5"))
