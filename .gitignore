@@ -53,10 +53,9 @@ third/
 
 # Environment files with secrets
 .env
-.env.*
+.env.development
 .env.product
 server/.env
-server/.env.*
 server/.env.product
 server/.env.development
 server/example/.env

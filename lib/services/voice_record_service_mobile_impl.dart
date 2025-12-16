@@ -8,6 +8,7 @@ import 'package:flutter/foundation.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:dio/dio.dart';
+import 'package:http/http.dart' as http;
 import '../config/api_config.dart';
 import '../utils/logger.dart';
 
@@ -87,6 +88,8 @@ class VoiceRecordService {
     // 如果已经初始化，直接返回
     if (_isInited) {
       logger.debug('🎤 录音器已经初始化');
+      // 确保内部状态同步
+      _isRecording = _recorder.isRecording;
       return;
     }
 
@@ -110,6 +113,7 @@ class VoiceRecordService {
       // 打开录音器
       await _recorder.openRecorder();
       _isInited = true;
+      _isRecording = false; // 确保初始状态
       logger.debug('🎤 录音器初始化成功');
       _initCompleter!.complete();
     } catch (e) {
@@ -136,6 +140,16 @@ class VoiceRecordService {
   ///
   /// 返回是否成功开始录音
   Future<bool> startRecording() async {
+    // 检查 flutter_sound 的实际状态
+    if (_recorder.isRecording) {
+      logger.debug('⚠️ flutter_sound 正在录音中，先停止');
+      try {
+        await _recorder.stopRecorder();
+      } catch (e) {
+        logger.debug('停止之前的录音失败: $e');
+      }
+    }
+    
     if (_isRecording) {
       logger.debug('⚠️ 已经在录音中');
       return false;
@@ -157,6 +171,17 @@ class VoiceRecordService {
 
       // 重置时长
       _currentDuration = 0;
+
+      // 开始录制，使用 AAC 编码（Android/iOS 原生支持）
+      await _recorder.startRecorder(
+        toFile: _currentRecordPath,
+        codec: Codec.aacMP4, // AAC 编码，MP4 容器（最通用）
+        bitRate: 64000, // 64kbps，AAC 语音质量好
+        sampleRate: 16000, // 16kHz，语音足够
+      );
+
+      // 录音开始后再设置状态和启动计时器
+      _isRecording = true;
       final startTime = DateTime.now();
 
       // 使用定时器手动更新时长（flutter_sound的onProgress在某些设备上不可靠）
@@ -173,15 +198,6 @@ class VoiceRecordService {
         }
       });
 
-      // 开始录制，使用 AAC 编码（Android/iOS 原生支持）
-      await _recorder.startRecorder(
-        toFile: _currentRecordPath,
-        codec: Codec.aacMP4, // AAC 编码，MP4 容器（最通用）
-        bitRate: 64000, // 64kbps，AAC 语音质量好
-        sampleRate: 16000, // 16kHz，语音足够
-      );
-
-      _isRecording = true;
       logger.debug('🎤 录音已开始');
 
       return true;
@@ -206,15 +222,15 @@ class VoiceRecordService {
       // 先保存当前时长（在清理之前）
       final duration = _currentDuration;
       
+      // 先清理定时器，防止继续更新
+      _progressSubscription?.cancel();
+      _progressSubscription = null;
+      _isRecording = false;
+      
       // 停止录音
       final path = await _recorder.stopRecorder();
 
       logger.debug('🎤 停止录音: path=$path, duration=${duration}秒');
-
-      // 清理
-      _progressSubscription?.cancel();
-      _progressSubscription = null;
-      _isRecording = false;
 
       // 检查录音文件是否存在
       if (path == null || path.isEmpty) {
@@ -351,6 +367,14 @@ class VoiceRecordService {
       // 获取文件名
       final fileName = filePath.split('/').last;
 
+      // 验证文件大小
+      final fileLength = await file.length();
+      logger.debug('📁 准备上传文件大小: $fileLength bytes');
+
+      if (fileLength == 0) {
+        throw Exception('语音文件为空，无法上传');
+      }
+
       // 1. 向后端请求 OSS 上传 URL
       logger.debug('📤 向后端请求上传地址...');
       final uploadInfo = await _getOpusUploadUrl(
@@ -363,27 +387,54 @@ class VoiceRecordService {
       logger.debug('   fileUrl: ${uploadInfo.fileUrl}');
       logger.debug('   contentType: ${uploadInfo.contentType}');
 
-      // 2. 上传文件到 OSS
-      logger.debug('📤 上传文件到OSS...');
-      final fileLength = await file.length();
+      // 2. 读取完整文件内容到内存
+      logger.debug('📤 读取文件内容...');
+      final fileBytes = await file.readAsBytes();
+      logger.debug('📤 实际读取字节数: ${fileBytes.length}');
+      
+      // 验证文件头（M4A/AAC 文件应该以 ftyp 开头）
+      if (fileBytes.length > 8) {
+        final header = fileBytes.sublist(0, 8);
+        logger.debug('📤 文件头(hex): ${header.map((b) => b.toRadixString(16).padLeft(2, '0')).join(' ')}');
+        // 检查是否是有效的 M4A 文件（ftyp box）
+        final ftypSignature = [0x66, 0x74, 0x79, 0x70]; // "ftyp"
+        if (fileBytes.length > 7 && 
+            fileBytes[4] == ftypSignature[0] && 
+            fileBytes[5] == ftypSignature[1] && 
+            fileBytes[6] == ftypSignature[2] && 
+            fileBytes[7] == ftypSignature[3]) {
+          logger.debug('✅ 文件头验证通过：有效的 M4A/MP4 文件');
+        } else {
+          logger.debug('⚠️ 文件头不是标准的 M4A/MP4 格式');
+        }
+      }
 
-      final response = await _dio.put(
-        uploadInfo.uploadUrl,
-        data: file.openRead(),
-        options: Options(
-          headers: {
-            'Content-Type': uploadInfo.contentType,
-            'Content-Length': fileLength,
-          },
-        ),
-        onSendProgress: (sent, total) {
-          onProgress?.call(sent, total);
-        },
-      );
+      if (fileBytes.isEmpty) {
+        throw Exception('读取语音文件失败：文件内容为空');
+      }
+
+      // 3. 使用 http 包上传到 OSS
+      logger.debug('📤 上传文件到OSS...');
+      
+      final request = http.Request('PUT', Uri.parse(uploadInfo.uploadUrl));
+      request.bodyBytes = fileBytes;
+      request.headers['Content-Type'] = uploadInfo.contentType;
+      request.headers['Content-Length'] = fileBytes.length.toString();
+
+      final streamedResponse = await request.send();
+      final response = await http.Response.fromStream(streamedResponse);
+
+      logger.debug('📥 OSS响应状态码: ${response.statusCode}');
+      if (response.statusCode != 200 && response.statusCode != 204) {
+        logger.debug('📥 OSS响应内容: ${response.body}');
+      }
 
       if (response.statusCode != 200 && response.statusCode != 204) {
-        throw Exception('上传到OSS失败: ${response.statusCode}');
+        throw Exception('上传到OSS失败: ${response.statusCode}, ${response.body}');
       }
+
+      // 回调进度（上传完成）
+      onProgress?.call(fileBytes.length, fileBytes.length);
 
       logger.debug('✅ 语音文件上传成功: ${uploadInfo.fileUrl}');
 

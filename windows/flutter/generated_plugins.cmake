@@ -11,6 +11,7 @@ list(APPEND FLUTTER_PLUGIN_LIST
   iris_method_channel
   pasteboard
   permission_handler_windows
+  record_windows
   screen_capturer_windows
   screen_retriever_windows
   sqlcipher_flutter_libs

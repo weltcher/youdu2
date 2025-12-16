@@ -884,6 +884,11 @@ class LocalDatabaseService {
         
         logger.debug('📦 [数据库初始化] 步骤8: 确保联系人快照表存在...');
         await _ensureContactSnapshotTable();
+        
+        // 🔴 验证voice_duration列是否存在
+        logger.debug('📦 [数据库初始化] 步骤9: 验证voice_duration列...');
+        await _ensureVoiceDurationColumn(db);
+        
         logger.debug('✅ 数据库初始化成功（移动端）');
         return db;
       } else {
@@ -1199,6 +1204,37 @@ class LocalDatabaseService {
     }
   }
 
+  /// 确保voice_duration列存在（用于修复旧数据库）
+  Future<void> _ensureVoiceDurationColumn(Database db) async {
+    try {
+      // 检查messages表是否有voice_duration列
+      final messagesColumns = await db.rawQuery('PRAGMA table_info(messages)');
+      final hasVoiceDurationInMessages = messagesColumns.any((col) => col['name'] == 'voice_duration');
+      
+      if (!hasVoiceDurationInMessages) {
+        logger.debug('⚠️ messages表缺少voice_duration列，正在添加...');
+        await db.execute('ALTER TABLE messages ADD COLUMN voice_duration INTEGER');
+        logger.debug('✅ messages表voice_duration列已添加');
+      } else {
+        logger.debug('✅ messages表voice_duration列已存在');
+      }
+      
+      // 检查group_messages表是否有voice_duration列
+      final groupMessagesColumns = await db.rawQuery('PRAGMA table_info(group_messages)');
+      final hasVoiceDurationInGroupMessages = groupMessagesColumns.any((col) => col['name'] == 'voice_duration');
+      
+      if (!hasVoiceDurationInGroupMessages) {
+        logger.debug('⚠️ group_messages表缺少voice_duration列，正在添加...');
+        await db.execute('ALTER TABLE group_messages ADD COLUMN voice_duration INTEGER');
+        logger.debug('✅ group_messages表voice_duration列已添加');
+      } else {
+        logger.debug('✅ group_messages表voice_duration列已存在');
+      }
+    } catch (e) {
+      logger.error('❌ 验证voice_duration列失败: $e');
+      // 不抛出异常，允许应用继续运行
+    }
+  }
 
   // ============ 私聊消息操作 ============
 

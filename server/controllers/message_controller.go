@@ -1299,7 +1299,7 @@ func (mc *MessageController) GetMessageHistory(c *gin.Context) {
 
 	// 查询两个用户之间的消息，排除已被当前用户删除的消息
 	query := `
-		SELECT id, sender_id, receiver_id, sender_name, receiver_name, sender_avatar, receiver_avatar, content, message_type, file_name, quoted_message_id, quoted_message_content, call_type, status, is_read, created_at, read_at
+		SELECT id, sender_id, receiver_id, sender_name, receiver_name, sender_avatar, receiver_avatar, content, message_type, file_name, quoted_message_id, quoted_message_content, call_type, voice_duration, status, is_read, created_at, read_at
 		FROM messages
 		WHERE ((sender_id = $1 AND receiver_id = $2) OR (sender_id = $2 AND receiver_id = $1))
 			AND (deleted_by_users = '' OR deleted_by_users NOT LIKE '%' || $5 || '%')
@@ -1331,6 +1331,7 @@ func (mc *MessageController) GetMessageHistory(c *gin.Context) {
 			&msg.QuotedMessageID,
 			&msg.QuotedMessageContent,
 			&msg.CallType,
+			&msg.VoiceDuration,
 			&msg.Status,
 			&msg.IsRead,
 			&msg.CreatedAt,

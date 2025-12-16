@@ -54,6 +54,7 @@ type GroupMessage struct {
 	Mentions             *string   `json:"mentions,omitempty" db:"mentions"`                     // @文本内容（如"@all"或"@张三(zhangsan)"）
 	CallType             *string   `json:"call_type,omitempty" db:"call_type"`                   // 通话类型（voice/video），仅用于call_initiated消息
 	ChannelName          *string   `json:"channel_name,omitempty" db:"channel_name"`             // Agora频道名称，用于加入群组通话
+	VoiceDuration        *int      `json:"voice_duration,omitempty" db:"voice_duration"`         // 语音消息时长（秒）
 	Status               string    `json:"status" db:"status"`
 	DeletedByUsers       string    `json:"deleted_by_users" db:"deleted_by_users"` // 已删除该消息的用户ID列表（逗号分隔）
 	CreatedAt            time.Time `json:"created_at" db:"created_at"`
@@ -88,6 +89,7 @@ type CreateGroupMessageRequest struct {
 	QuotedMessageContent string `json:"quoted_message_content,omitempty"`
 	MentionedUserIds     []int  `json:"mentioned_user_ids,omitempty"`
 	Mentions             string `json:"mentions,omitempty"`
+	VoiceDuration        int    `json:"voice_duration,omitempty"`
 }
 
 // GroupDetailResponse 群组详情响应
@@ -634,9 +636,9 @@ func (r *GroupRepository) CreateGroupMessage(msg *CreateGroupMessageRequest, sen
 	// sender_nickname 和 sender_full_name 单独保存，用于前端显示逻辑
 
 	query := `
-		INSERT INTO group_messages (group_id, sender_id, sender_name, sender_nickname, sender_full_name, sender_avatar, content, message_type, file_name, quoted_message_id, quoted_message_content, mentioned_user_ids, mentions)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-		RETURNING id, group_id, sender_id, sender_name, sender_nickname, sender_full_name, sender_avatar, content, message_type, file_name, quoted_message_id, quoted_message_content, mentioned_user_ids, mentions, status, created_at
+		INSERT INTO group_messages (group_id, sender_id, sender_name, sender_nickname, sender_full_name, sender_avatar, content, message_type, file_name, quoted_message_id, quoted_message_content, mentioned_user_ids, mentions, voice_duration)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+		RETURNING id, group_id, sender_id, sender_name, sender_nickname, sender_full_name, sender_avatar, content, message_type, file_name, quoted_message_id, quoted_message_content, mentioned_user_ids, mentions, voice_duration, status, created_at
 	`
 
 	var fileName *string
@@ -673,8 +675,14 @@ func (r *GroupRepository) CreateGroupMessage(msg *CreateGroupMessageRequest, sen
 		mentions = &msg.Mentions
 	}
 
+	// 处理语音时长
+	var voiceDuration *int
+	if msg.VoiceDuration > 0 {
+		voiceDuration = &msg.VoiceDuration
+	}
+
 	message := &GroupMessage{}
-	err := r.DB.QueryRow(query, msg.GroupID, senderID, senderName, senderNickname, senderFullName, senderAvatar, msg.Content, messageType, fileName, quotedMessageID, quotedMessageContent, mentionedUserIDs, mentions).Scan(
+	err := r.DB.QueryRow(query, msg.GroupID, senderID, senderName, senderNickname, senderFullName, senderAvatar, msg.Content, messageType, fileName, quotedMessageID, quotedMessageContent, mentionedUserIDs, mentions, voiceDuration).Scan(
 		&message.ID,
 		&message.GroupID,
 		&message.SenderID,
@@ -689,6 +697,7 @@ func (r *GroupRepository) CreateGroupMessage(msg *CreateGroupMessageRequest, sen
 		&message.QuotedMessageContent,
 		&message.MentionedUserIDs,
 		&message.Mentions,
+		&message.VoiceDuration,
 		&message.Status,
 		&message.CreatedAt,
 	)
@@ -712,7 +721,8 @@ func (r *GroupRepository) GetGroupMessages(groupID int, limit int) ([]GroupMessa
 		    gm.quoted_message_id, 
 			gm.quoted_message_content,
 			gm.mentioned_user_ids,
-			gm.mentions, 
+			gm.mentions,
+			gm.voice_duration,
 			gm.status, 
 			gm.created_at
 		FROM group_messages gm
@@ -745,6 +755,7 @@ func (r *GroupRepository) GetGroupMessages(groupID int, limit int) ([]GroupMessa
 			&msg.QuotedMessageContent,
 			&msg.MentionedUserIDs,
 			&msg.Mentions,
+			&msg.VoiceDuration,
 			&msg.Status,
 			&msg.CreatedAt,
 		)

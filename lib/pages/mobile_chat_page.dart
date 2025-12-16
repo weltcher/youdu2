@@ -1737,28 +1737,9 @@ class _MobileChatPageState extends State<MobileChatPage>
     final index = _messages.indexWhere((msg) => msg.id == messageId);
     if (index != -1 && !_messages[index].isRead) {
       setState(() {
-        _messages[index] = MessageModel(
-          id: _messages[index].id,
-          senderId: _messages[index].senderId,
-          receiverId: _messages[index].receiverId,
-          senderName: _messages[index].senderName,
-          receiverName: _messages[index].receiverName,
-          senderAvatar: _messages[index].senderAvatar,
-          receiverAvatar: _messages[index].receiverAvatar,
-          senderNickname: _messages[index].senderNickname,
-          senderFullName: _messages[index].senderFullName,
-          receiverFullName: _messages[index].receiverFullName,
-          content: _messages[index].content,
-          messageType: _messages[index].messageType,
-          fileName: _messages[index].fileName,
-          quotedMessageId: _messages[index].quotedMessageId,
-          quotedMessageContent: _messages[index].quotedMessageContent,
-          status: _messages[index].status,
-          mentionedUserIds: _messages[index].mentionedUserIds,
-          mentions: _messages[index].mentions,
-          callType: _messages[index].callType,
+        // 🔴 使用 copyWith 替代手动创建，确保所有字段都被保留（包括 voiceDuration）
+        _messages[index] = _messages[index].copyWith(
           isRead: true,
-          createdAt: _messages[index].createdAt,
           readAt: DateTime.now(),
         );
       });
