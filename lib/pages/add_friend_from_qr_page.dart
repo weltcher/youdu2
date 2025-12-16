@@ -42,6 +42,15 @@ class _AddFriendFromQRPageState extends State<AddFriendFromQRPage> {
         return;
       }
 
+      // 检查邀请码是否为空
+      if (widget.inviteCode.isEmpty) {
+        setState(() {
+          _errorMessage = '无效的二维码';
+          _isLoading = false;
+        });
+        return;
+      }
+
       // 根据邀请码查询用户信息
       final response = await ApiService.getUserByInviteCode(
         token: token,
