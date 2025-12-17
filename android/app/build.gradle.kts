@@ -51,21 +51,43 @@ android {
     buildTypes {
         getByName("release") {
             signingConfig = signingConfigs.getByName("release")
-            // 不启用混淆，避免潜在问题
-            isMinifyEnabled = false
-            isShrinkResources = false
+            // Enable code shrinking and resource shrinking
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+            
+            // Only include arm64-v8a architecture to reduce APK size by ~70%
+            ndk {
+                abiFilters.clear()
+                abiFilters.add("arm64-v8a")
+            }
         }
     }
 
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+            // Exclude duplicate license files
+            excludes += "/META-INF/LICENSE*"
+            excludes += "/META-INF/NOTICE*"
+            excludes += "META-INF/*.kotlin_module"
         }
         jniLibs {
+            // Only keep arm64-v8a libraries
             pickFirsts += "lib/arm64-v8a/libsqlcipher.so"
-            pickFirsts += "lib/armeabi-v7a/libsqlcipher.so"
-            pickFirsts += "lib/x86/libsqlcipher.so"
-            pickFirsts += "lib/x86_64/libsqlcipher.so"
+            
+            // Exclude unused Agora extensions to reduce size (~15MB)
+            excludes += "lib/arm64-v8a/libagora_lip_sync_extension.so"
+            excludes += "lib/arm64-v8a/libagora_face_capture_extension.so"
+            excludes += "lib/arm64-v8a/libagora_segmentation_extension.so"
+            excludes += "lib/arm64-v8a/libagora_content_inspect_extension.so"
+            excludes += "lib/arm64-v8a/libagora_video_quality_analyzer_extension.so"
+            excludes += "lib/arm64-v8a/libagora_face_detection_extension.so"
+            excludes += "lib/arm64-v8a/libagora_video_av1_encoder_extension.so"
+            excludes += "lib/arm64-v8a/libagora_video_av1_decoder_extension.so"
         }
     }
 }
