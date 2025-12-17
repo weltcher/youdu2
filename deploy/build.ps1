@@ -147,6 +147,6 @@ else {
     }
 }
 
-Write-Host "
+Write-Host ""
 $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
 Write-Host "Build completed at: $timestamp" -ForegroundColor Gray

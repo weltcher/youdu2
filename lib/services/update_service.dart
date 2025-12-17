@@ -755,6 +755,81 @@ echo ========================================
 timeout /t 1 /nobreak >nul
 exit
 ''';
+      } else if (fileExtension == '.7z') {
+        // 7z包：使用7z命令解压到tmp目录，然后替换应用目录
+        scriptContent = '''
+@echo off
+chcp 65001 >nul
+echo ========================================
+echo           Youdu Update Script (7z)
+echo ========================================
+echo.
+
+set "ARCHIVE_FILE=$updateFilePath"
+set "TMP_DIR=$tmpDir"
+set "APP_DIR=$appDir"
+set "APP_NAME=$appName"
+set "APP_EXE=$currentExePath"
+
+echo [1/6] Preparing update...
+timeout /t 2 /nobreak >nul
+
+echo [2/6] Closing application...
+taskkill /F /IM %APP_NAME%.exe >nul 2>&1
+timeout /t 2 /nobreak >nul
+
+echo [3/6] Extracting 7z update package to tmp directory...
+REM Try using 7z.exe if available, otherwise use PowerShell with 7Zip4Powershell
+where 7z >nul 2>&1
+if %ERRORLEVEL% EQU 0 (
+    7z x "%ARCHIVE_FILE%" -o"%TMP_DIR%" -y
+) else (
+    REM Try using tar (Windows 10 1803+)
+    tar -xf "%ARCHIVE_FILE%" -C "%TMP_DIR%" 2>nul
+    if %ERRORLEVEL% NEQ 0 (
+        echo ERROR: 7z.exe not found and tar failed!
+        echo Please install 7-Zip from https://www.7-zip.org/
+        pause
+        exit /b 1
+    )
+)
+
+echo [4/6] Finding extracted version directory...
+for /d %%D in ("%TMP_DIR%\\*") do (
+    set "VERSION_DIR=%%D"
+)
+echo Found version directory: %VERSION_DIR%
+
+echo [5/6] Replacing application files...
+echo Deleting old files in %APP_DIR%...
+del /Q "%APP_DIR%\\*.*" >nul 2>&1
+for /d %%D in ("%APP_DIR%\\*") do (
+    if /I not "%%~nxD"=="tmp" rmdir /S /Q "%%D" >nul 2>&1
+)
+
+echo Copying new files from %VERSION_DIR%...
+xcopy /E /Y /I "%VERSION_DIR%\\*" "%APP_DIR%\\" >nul
+if %ERRORLEVEL% NEQ 0 (
+    echo ERROR: Failed to copy new files!
+    pause
+    exit /b 1
+)
+
+echo [6/6] Starting new version...
+start /b cmd /c start "" "%APP_EXE%"
+
+echo.
+echo Cleaning temporary files...
+timeout /t 2 /nobreak >nul
+rmdir /S /Q "%VERSION_DIR%" >nul 2>&1
+del "%ARCHIVE_FILE%" >nul 2>&1
+
+echo ========================================
+echo      Update completed successfully!
+echo ========================================
+timeout /t 1 /nobreak >nul
+exit
+''';
       } else if (fileExtension == '.exe') {
         // EXE安装包：直接运行安装程序
         scriptContent = '''

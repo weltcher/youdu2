@@ -142,6 +142,7 @@ class _DesktopHomePageState extends State<DesktopHomePage> with WindowListener {
   bool _isLoadingGroups = false; // 是否正在加载群组
   String? _groupsError; // 群组加载错误信息
   GroupModel? _selectedGroup; // 当前选中的群组
+  List<Map<String, dynamic>>? _selectedGroupMembersData; // 选中群组的成员详细数据（从服务器获取）
   // 群通知相关状态
   List<Map<String, dynamic>> _pendingGroupMembers = []; // 待审核的群组成员列表
   bool _isLoadingPendingMembers = false; // 是否正在加载待审核成员
@@ -9557,6 +9558,43 @@ class _DesktopHomePageState extends State<DesktopHomePage> with WindowListener {
     }
   }
 
+  // 🔴 加载选中群组的成员详细数据（用于固定群组详情页面显示最新的成员昵称和头像）
+  Future<void> _loadSelectedGroupMembersData(int groupId) async {
+    try {
+      final token = _token;
+      if (token == null || token.isEmpty) {
+        return;
+      }
+
+      logger.debug('📡 加载群组成员详细数据 - 群组ID: $groupId');
+      final response = await ApiService.getGroupDetail(
+        token: token,
+        groupId: groupId,
+      );
+
+      if (response['code'] == 0 && response['data'] != null) {
+        final membersData = response['data']['members'] as List?;
+        if (membersData != null && mounted) {
+          // 只保留已通过审核的成员
+          final approvedMembers = membersData
+              .where((m) => (m['approval_status'] as String? ?? 'approved') == 'approved')
+              .map((m) => m as Map<String, dynamic>)
+              .toList();
+          
+          setState(() {
+            // 只有当前选中的群组ID匹配时才更新数据
+            if (_selectedGroup?.id == groupId) {
+              _selectedGroupMembersData = approvedMembers;
+              logger.debug('✅ 群组成员详细数据已加载 - 群组ID: $groupId, 成员数: ${approvedMembers.length}');
+            }
+          });
+        }
+      }
+    } catch (e) {
+      logger.debug('❌ 加载群组成员详细数据失败: $e');
+    }
+  }
+
   // 加载待审核的群组成员
   Future<void> _loadPendingGroupMembers() async {
     // 🔴 防止重复调用：如果已经在加载中，直接返回
@@ -12601,9 +12639,20 @@ class _DesktopHomePageState extends State<DesktopHomePage> with WindowListener {
             _groupMembers = [];
           }
         }
+
+        // 6. 🔴 如果选中了群组，更新选中群组的成员数据中的头像
+        if (_selectedGroupMembersData != null) {
+          for (int i = 0; i < _selectedGroupMembersData!.length; i++) {
+            if (_selectedGroupMembersData![i]['user_id'] == userId) {
+              _selectedGroupMembersData![i]['avatar'] = newAvatar;
+              logger.debug('✅ 已更新选中群组成员数据中用户 $userId 的头像');
+              break;
+            }
+          }
+        }
       });
 
-      // 6. 重新从数据库加载会话列表（确保数据库中的头像也是最新的）
+      // 7. 重新从数据库加载会话列表（确保数据库中的头像也是最新的）
       logger.debug('🔄 重新从数据库加载会话列表，确保显示最新头像');
       await _loadRecentContacts();
 
@@ -12778,6 +12827,20 @@ class _DesktopHomePageState extends State<DesktopHomePage> with WindowListener {
           _messagesError = null;
         });
         await _loadMessageHistory(groupId, isGroup: true);
+      }
+
+      // 🔴 如果选中了该群组，更新选中群组的成员数据中的昵称
+      if (_selectedGroup?.id == groupId && _selectedGroupMembersData != null) {
+        setState(() {
+          for (int i = 0; i < _selectedGroupMembersData!.length; i++) {
+            if (_selectedGroupMembersData![i]['user_id'] == userId) {
+              _selectedGroupMembersData![i]['display_name'] = newNickname;
+              _selectedGroupMembersData![i]['nickname'] = newNickname;
+              logger.debug('✅ 已更新选中群组成员数据中用户 $userId 的昵称为: $newNickname');
+              break;
+            }
+          }
+        });
       }
 
       logger.debug('✅ 群组昵称更新处理完成');
@@ -19225,13 +19288,16 @@ class _DesktopHomePageState extends State<DesktopHomePage> with WindowListener {
 
     return InkWell(
       onTap: () {
-        // 单击群组，显示群组信
+        // 单击群组，显示群组信息
         logger.debug('单击群组: ${group.name} (ID: ${group.id})');
         setState(() {
           _selectedGroup = group;
+          _selectedGroupMembersData = null; // 清空旧的成员数据
           _selectedPerson = null; // 清除选中的人
           _selectedFavoriteCategory = null; // 清除常用分类选择
         });
+        // 异步加载群组成员详细数据
+        _loadSelectedGroupMembersData(group.id);
       },
       onDoubleTap: () {
         // 双击群组，跳转到消息页面并打开群组聊天
@@ -19788,8 +19854,33 @@ class _DesktopHomePageState extends State<DesktopHomePage> with WindowListener {
     );
   }
 
-  // 群成员列
+  // 群成员列表
   Widget _buildGroupMembersList(GroupModel group) {
+    // 🔴 优先使用从服务器获取的成员详细数据
+    if (_selectedGroupMembersData != null && _selectedGroupMembersData!.isNotEmpty) {
+      return Container(
+        constraints: const BoxConstraints(maxHeight: 280),
+        decoration: BoxDecoration(
+          border: Border.all(color: const Color(0xFFE5E5E5), width: 1),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: ListView.builder(
+          shrinkWrap: true,
+          itemCount: _selectedGroupMembersData!.length,
+          itemBuilder: (context, index) {
+            final isLastItem = index == _selectedGroupMembersData!.length - 1;
+            final memberData = _selectedGroupMembersData![index];
+            return _buildGroupMemberItemFromData(
+              memberData,
+              group,
+              isLastItem: isLastItem,
+            );
+          },
+        ),
+      );
+    }
+
+    // 如果没有成员详细数据，显示加载中或使用旧的方式
     if (group.memberIds.isEmpty) {
       return const Padding(
         padding: EdgeInsets.symmetric(vertical: 20),
@@ -19802,23 +19893,124 @@ class _DesktopHomePageState extends State<DesktopHomePage> with WindowListener {
       );
     }
 
+    // 正在加载成员数据时显示加载指示器
     return Container(
       constraints: const BoxConstraints(maxHeight: 280),
       decoration: BoxDecoration(
         border: Border.all(color: const Color(0xFFE5E5E5), width: 1),
         borderRadius: BorderRadius.circular(4),
       ),
-      child: ListView.builder(
-        shrinkWrap: true,
-        itemCount: group.memberIds.length,
-        itemBuilder: (context, index) {
-          final isLastItem = index == group.memberIds.length - 1;
-          return _buildGroupMemberItem(
-            group.memberIds[index],
-            group,
-            isLastItem: isLastItem,
-          );
-        },
+      child: const Center(
+        child: Padding(
+          padding: EdgeInsets.all(20),
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+      ),
+    );
+  }
+
+  // 🔴 使用服务器返回的成员数据构建成员项（显示最新的昵称和头像）
+  Widget _buildGroupMemberItemFromData(
+    Map<String, dynamic> memberData,
+    GroupModel group, {
+    bool isLastItem = false,
+  }) {
+    final memberId = memberData['user_id'] as int;
+    final isCurrentUser = memberId == _currentUserId;
+    
+    // 🔴 优先使用服务器返回的 display_name，与群组设置弹窗保持一致
+    final displayName = isCurrentUser
+        ? _userDisplayName
+        : (memberData['display_name'] as String? ?? 
+           memberData['username'] as String? ?? 
+           memberData['full_name'] as String? ?? 
+           '用户$memberId');
+    
+    // 使用服务器返回的头像
+    final avatarUrl = isCurrentUser
+        ? _userAvatar
+        : memberData['avatar'] as String?;
+    
+    final avatarText = isCurrentUser
+        ? (_username.isNotEmpty ? _username.substring(0, 1).toUpperCase() : 'U')
+        : (displayName.isNotEmpty ? displayName.substring(0, 1) : 'U');
+    
+    // 获取在线状态（优先使用WebSocket状态）
+    final status = isCurrentUser 
+        ? _userStatus 
+        : (_websocketUserStatus[memberId] ?? memberData['status'] as String? ?? 'offline');
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        border: isLastItem
+            ? null
+            : const Border(
+                bottom: BorderSide(color: Color(0xFFE5E5E5), width: 1),
+              ),
+      ),
+      child: Row(
+        children: [
+          // 头像
+          Stack(
+            children: [
+              CircleAvatar(
+                radius: 16,
+                backgroundColor: const Color(0xFF4A90E2),
+                backgroundImage: avatarUrl != null && avatarUrl.isNotEmpty
+                    ? NetworkImage(avatarUrl)
+                    : null,
+                child: avatarUrl == null || avatarUrl.isEmpty
+                    ? Text(
+                        avatarText,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      )
+                    : null,
+              ),
+              // 在线状态
+              Positioned(
+                right: -1,
+                bottom: -1,
+                child: Container(
+                  width: 8,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    color: _getStatusColor(status),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white, width: 1.5),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(width: 10),
+          // 姓名
+          Expanded(
+            child: Text(
+              displayName,
+              style: const TextStyle(fontSize: 13, color: Color(0xFF333333)),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          // 群主标识
+          if (memberId == group.ownerId)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFF7E6),
+                borderRadius: BorderRadius.circular(2),
+                border: Border.all(color: const Color(0xFFFFD666), width: 0.5),
+              ),
+              child: const Text(
+                '群主',
+                style: TextStyle(fontSize: 10, color: Color(0xFFD46B08)),
+              ),
+            ),
+        ],
       ),
     );
   }

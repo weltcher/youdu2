@@ -1,12 +1,26 @@
+import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart';
 
 /// API 配置类
 class ApiConfig {
   // 默认服务器配置
-  // 🔥 自动根据debug/release模式切换服务器地址和协议
-  // Debug模式: 使用本地服务器 192.168.1.6 (HTTP 8080/8081)
-  // Release模式: 使用生产服务器 www.xn--wxtp0q.com (HTTPS 8080/8081)
-  static final String defaultHost = kDebugMode ? '192.168.1.20' : 'www.xn--wxtp0q.com';
+  // 🔥 自动根据debug/release模式和平台切换服务器地址和协议
+  // Debug模式:
+  //   - macOS: 使用 192.168.1.20 (HTTP 8180/8181)
+  //   - Windows: 使用 192.168.1.6 (HTTP 8180/8181)
+  // Release模式: 使用生产服务器 www.xn--wxtp0q.com (HTTPS 8180/8181)
+  static String get defaultHost {
+    if (!kDebugMode) {
+      return 'www.xn--wxtp0q.com';
+    }
+    // Debug 模式下根据平台选择不同的本地服务器
+    if (Platform.isMacOS) {
+      return '192.168.1.20';
+    } else {
+      // Windows 和其他平台
+      return '192.168.1.6';
+    }
+  }
   
   // 端口配置：统一使用 8080/8081
   static const String defaultPort = '8180';

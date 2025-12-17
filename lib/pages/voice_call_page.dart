@@ -2819,23 +2819,15 @@ class _VoiceCallPageState extends State<VoiceCallPage> {
 
   // 构建群组成员水平滚动视图（带左右箭头按钮）
   Widget _buildGroupMembersScrollView() {
-    // 🔴 修改：计算已连接成员数量
-    int connectedMemberCount = 0;
-    for (int i = 0; i < _currentGroupCallUserIds.length; i++) {
-      final userId = _currentGroupCallUserIds[i];
-      final isConnected = (widget.currentUserId != null && userId == widget.currentUserId) || 
-                         _connectedMemberIds.contains(userId);
-      if (isConnected) {
-        connectedMemberCount++;
-      }
-    }
+    // 🔴 修改：显示所有成员（包括未连接的），与群组视频通话保持一致
+    final memberCount = _currentGroupCallUserIds.length;
     
-    // 总项目数包括已连接成员数量 + 1个"+"按钮
-    final totalItemCount = connectedMemberCount + 1;
+    // 总项目数包括所有成员数量 + 1个"+"按钮
+    final totalItemCount = memberCount + 1;
 
     logger.debug('🎨 ========== _buildGroupMembersScrollView 开始构建 ==========');
-    logger.debug('🎨 总成员数量: ${_currentGroupCallUserIds.length}');
-    logger.debug('🎨 已连接成员数量: $connectedMemberCount');
+    logger.debug('🎨 总成员数量: $memberCount');
+    logger.debug('🎨 已连接成员数量: ${_connectedMemberIds.length}');
     logger.debug('🎨 totalItemCount: $totalItemCount');
     logger.debug(
       '🎨 _currentGroupCallUserIds.length: ${_currentGroupCallUserIds.length}',
@@ -2954,43 +2946,10 @@ class _VoiceCallPageState extends State<VoiceCallPage> {
       '🎨 _currentGroupCallDisplayNames: ${_currentGroupCallDisplayNames}',
     );
 
-    // 🔴 新增：过滤只显示已连接的成员
-    List<int> connectedUserIds = [];
-    List<String> connectedDisplayNames = [];
-    List<String?> connectedAvatarUrls = [];
-    
-    for (int i = 0; i < _currentGroupCallUserIds.length; i++) {
-      final userId = _currentGroupCallUserIds[i];
-      final isConnected = (widget.currentUserId != null && userId == widget.currentUserId) || 
-                         _connectedMemberIds.contains(userId);
-      
-      if (isConnected) {
-        connectedUserIds.add(userId);
-        final displayName = i < _currentGroupCallDisplayNames.length
-            ? _currentGroupCallDisplayNames[i]
-            : 'User $userId';
-        connectedDisplayNames.add(displayName);
-
-        // 尝试从头像列表中获取头像URL
-        String? avatarUrl;
-        if (i < _currentGroupCallAvatarUrls.length) {
-          avatarUrl = _currentGroupCallAvatarUrls[i];
-        }
-
-        // 如果是当前用户且没头像URL，使用当前用户头像
-        if ((widget.currentUserId != null && userId == widget.currentUserId) &&
-            (avatarUrl == null || avatarUrl.isEmpty)) {
-          avatarUrl = _currentUserAvatarUrl;
-        }
-
-        connectedAvatarUrls.add(avatarUrl);
-      }
-    }
-    
-    final connectedMemberCount = connectedUserIds.length;
-    logger.debug('🎨 已连接成员数量: $connectedMemberCount');
-    logger.debug('🎨 已连接成员ID: $connectedUserIds');
-    logger.debug('🎨 已连接成员名称: $connectedDisplayNames');
+    // 🔴 修改：显示所有成员（包括未连接的），与群组视频通话保持一致
+    final memberCount = _currentGroupCallUserIds.length;
+    logger.debug('🎨 总成员数量: $memberCount');
+    logger.debug('🎨 已连接成员ID: $_connectedMemberIds');
 
     // 根据平台选择不同的尺寸
     final isMobile = ResponsiveHelper.isMobile(context);
@@ -3004,20 +2963,35 @@ class _VoiceCallPageState extends State<VoiceCallPage> {
     const verticalSpacing1 = 12.0;
     const verticalSpacing2 = 8.0;
 
-    List<Widget> memberWidgets = List.generate(connectedMemberCount, (index) {
-      final userId = connectedUserIds[index];
-      final displayName = connectedDisplayNames[index];
-      final avatarUrl =
-          index < connectedAvatarUrls.length ? connectedAvatarUrls[index] : null;
+    List<Widget> memberWidgets = List.generate(memberCount, (index) {
+      final userId = _currentGroupCallUserIds[index];
+      final displayName = index < _currentGroupCallDisplayNames.length
+          ? _currentGroupCallDisplayNames[index]
+          : 'User $userId';
 
-      logger.debug('🎨 构建成员[$index]: ID=$userId, 名称=$displayName');
+      // 获取头像URL
+      String? avatarUrl;
+      if (index < _currentGroupCallAvatarUrls.length) {
+        avatarUrl = _currentGroupCallAvatarUrls[index];
+      }
+      // 如果是当前用户且没头像URL，使用当前用户头像
+      if ((widget.currentUserId != null && userId == widget.currentUserId) &&
+          (avatarUrl == null || avatarUrl.isEmpty)) {
+        avatarUrl = _currentUserAvatarUrl;
+      }
+
+      // 🔴 修改：判断成员是否已连接（当前用户始终视为已连接）
+      final isConnected = (widget.currentUserId != null && userId == widget.currentUserId) || 
+                         _connectedMemberIds.contains(userId);
+
+      logger.debug('🎨 构建成员[$index]: ID=$userId, 名称=$displayName, 已连接=$isConnected');
 
       final itemPaddingLeft = isMobile
           ? (index == 0 ? 12.0 : 8.0)
           : (index == 0 ? 20.0 : 16.0);
       final itemPaddingRight = isMobile
-          ? (index == connectedMemberCount - 1 ? 12.0 : 8.0)
-          : (index == connectedMemberCount - 1 ? 20.0 : 16.0);
+          ? (index == memberCount - 1 ? 12.0 : 8.0)
+          : (index == memberCount - 1 ? 20.0 : 16.0);
 
       return Padding(
         padding: EdgeInsets.only(
@@ -3084,13 +3058,13 @@ class _VoiceCallPageState extends State<VoiceCallPage> {
               ),
             ),
             SizedBox(height: verticalSpacing2),
-            // 状态（只显示已连接成员，所以都显示"已连接"）
+            // 🔴 修改：根据实际连接状态显示（与群组视频通话保持一致）
             Text(
-              '已连接',
+              isConnected ? '已连接' : '正在呼叫...',
               style: TextStyle(
                 fontSize: statusFontSize,
-                color: Colors.greenAccent,
-                fontWeight: FontWeight.w500,
+                color: isConnected ? Colors.greenAccent : Colors.white70,
+                fontWeight: isConnected ? FontWeight.w500 : FontWeight.normal,
               ),
             ),
           ],
