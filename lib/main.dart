@@ -14,6 +14,7 @@ import 'services/notification_service.dart';
 import 'services/api_service.dart';
 import 'services/update_service.dart';
 import 'services/permission_service.dart';
+import 'services/version_persistence_service.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 /// HTTPS 证书信任配置（仅开发环境）
@@ -33,63 +34,89 @@ class MyHttpOverrides extends HttpOverrides {
   }
 }
 
-/// 检查并保存当前版本信息到数据库
-/// 在应用启动时调用，确保数据库中有当前版本的记录
+/// 检查并同步版本信息
+/// 优先级：持久化文件 > 数据库 > 包信息
+/// 确保持久化文件和数据库中的版本信息一致
 Future<void> _checkAndSaveVersion() async {
   try {
     final platform = Platform.operatingSystem;
+    final persistenceService = VersionPersistenceService();
+    final dbService = LocalDatabaseService();
+
+    // 1. 先检查持久化文件中是否有版本信息（升级后保存的，不会被删除）
+    final persistedVersion = await persistenceService.getVersion(platform);
+    if (persistedVersion != null) {
+      final version = persistedVersion['version'] as String;
+      final versionCode = persistedVersion['version_code'] as String? ?? version;
+
+      logger.info('📱 [版本检查] 从持久化文件获取版本: $version (代码: $versionCode)');
+
+      // 同步到数据库
+      await dbService.saveVersion(
+        version: version,
+        versionCode: versionCode,
+        fileSize: persistedVersion['file_size'] as int? ?? 0,
+        releaseNotes: persistedVersion['release_notes'] as String?,
+        releaseDate: persistedVersion['release_date'] as String?,
+        platform: platform,
+      );
+      logger.info('✅ [版本检查] 已同步版本信息到数据库');
+      return;
+    }
+
+    // 2. 持久化文件没有，检查数据库是否有版本信息
+    final storedVersion = await dbService.getStoredVersion(platform);
+    if (storedVersion != null) {
+      final version = storedVersion['version'] as String;
+      final versionCode = storedVersion['version_code'] as String? ?? version;
+
+      logger.info('📱 [版本检查] 从数据库获取版本: $version (代码: $versionCode)');
+
+      // 同步到持久化文件（修复旧版本升级后持久化文件为空的问题）
+      await persistenceService.saveVersion(
+        version: version,
+        versionCode: versionCode,
+        platform: platform,
+        fileSize: storedVersion['file_size'] as int? ?? 0,
+        releaseNotes: storedVersion['release_notes'] as String?,
+        releaseDate: storedVersion['release_date'] as String?,
+      );
+      logger.info('✅ [版本检查] 已同步版本信息到持久化文件');
+      return;
+    }
+
+    // 3. 数据库也没有，从包信息获取（首次安装）
     final packageInfo = await PackageInfo.fromPlatform();
     String version = packageInfo.version;
     String buildNumber = packageInfo.buildNumber;
-    
+
     // 修复旧版本格式问题：如果 version 包含错误格式（如 1.0.41765520149）
-    // 需要拆分成正确的 version 和 buildNumber
     if (version.contains(RegExp(r'\d+\.\d+\.\d+\d{10}'))) {
-      // 匹配类似 1.0.41765520149 的格式
       final match = RegExp(r'^(\d+\.\d+\.\d+)(\d{10})$').firstMatch(version);
       if (match != null) {
-        version = match.group(1)!; // 1.0.4
-        buildNumber = match.group(2)!; // 1765520149
+        version = match.group(1)!;
+        buildNumber = match.group(2)!;
         logger.info('🔧 [版本检查] 修复版本格式: ${packageInfo.version} -> $version + $buildNumber');
       }
     }
-    
-    logger.info('📱 [版本检查] 当前应用版本: $version (build: $buildNumber)');
-    
-    // 从数据库获取已保存的版本
-    final dbService = LocalDatabaseService();
-    final storedVersion = await dbService.getStoredVersion(platform);
-    
-    if (storedVersion == null) {
-      // 数据库中没有版本记录，保存当前版本
-      logger.info('💾 [版本检查] 数据库中无版本记录，保存当前版本');
-      await dbService.saveVersion(
-        version: version,
-        versionCode: buildNumber,
-        fileSize: 0,
-        releaseNotes: '当前安装版本',
-        releaseDate: DateTime.now().toIso8601String(),
-        platform: platform,
-      );
-    } else {
-      final storedVersionStr = storedVersion['version'] as String;
-      final storedVersionCode = storedVersion['version_code'] as String? ?? storedVersionStr;
-      
-      // 比较版本号，如果不同则更新
-      if (storedVersionStr != version || storedVersionCode != buildNumber) {
-        logger.info('🔄 [版本检查] 检测到版本变化: $storedVersionStr ($storedVersionCode) -> $version ($buildNumber)');
-        await dbService.saveVersion(
-          version: version,
-          versionCode: buildNumber,
-          fileSize: 0,
-          releaseNotes: '应用已更新',
-          releaseDate: DateTime.now().toIso8601String(),
-          platform: platform,
-        );
-      } else {
-        logger.info('✅ [版本检查] 版本信息已是最新');
-      }
-    }
+
+    logger.info('📱 [版本检查] 首次安装，从包信息获取版本: $version (build: $buildNumber)');
+
+    // 保存到数据库和持久化文件
+    await dbService.saveVersion(
+      version: version,
+      versionCode: buildNumber,
+      fileSize: 0,
+      releaseNotes: '当前安装版本',
+      releaseDate: DateTime.now().toIso8601String(),
+      platform: platform,
+    );
+    await persistenceService.saveVersion(
+      version: version,
+      versionCode: buildNumber,
+      platform: platform,
+    );
+    logger.info('✅ [版本检查] 已保存版本信息');
   } catch (e) {
     logger.error('❌ [版本检查] 检查并保存版本失败: $e');
   }

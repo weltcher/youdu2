@@ -13,6 +13,7 @@ import '../config/api_config.dart';
 import '../utils/logger.dart';
 import 'local_database_service.dart';
 import 'chunk_download_service.dart';
+import 'version_persistence_service.dart';
 
 /// 升级服务
 class UpdateService {
@@ -21,19 +22,34 @@ class UpdateService {
   UpdateService._internal();
 
   /// 获取当前版本信息
-  /// 优先从本地数据库获取，如果没有则从包信息获取
+  /// 优先级：持久化文件 > 本地数据库 > 包信息
+  /// PC端升级会删除应用目录，所以需要从持久化文件读取
   static Future<Map<String, String>> getCurrentVersion() async {
     try {
       final platform = Platform.operatingSystem;
+      final persistenceService = VersionPersistenceService();
       
-      // 优先从本地数据库获取版本信息
+      // 1. 优先从持久化文件获取（PC端升级后不会丢失）
+      final persistedVersion = await persistenceService.getVersion(platform);
+      if (persistedVersion != null) {
+        String version = persistedVersion['version'] as String;
+        String versionCode = persistedVersion['version_code'] as String? ?? version;
+        
+        logger.info('📱 [版本信息] 从持久化文件获取: $version (代码: $versionCode)');
+        return {
+          'version': version,
+          'versionCode': versionCode,
+        };
+      }
+
+      // 2. 从本地数据库获取版本信息
       final dbService = LocalDatabaseService();
       final storedVersion = await dbService.getStoredVersion(platform);
-      
+
       if (storedVersion != null) {
         String version = storedVersion['version'] as String;
         String versionCode = storedVersion['version_code'] as String? ?? version;
-        
+
         // 修复旧版本格式问题：如果 version 包含错误格式（如 1.0.41765520149）
         if (version.contains(RegExp(r'\d+\.\d+\.\d+\d{10}'))) {
           final match = RegExp(r'^(\d+\.\d+\.\d+)(\d{10})$').firstMatch(version);
@@ -41,7 +57,7 @@ class UpdateService {
             version = match.group(1)!; // 1.0.4
             versionCode = match.group(2)!; // 1765520149
             logger.debug('🔧 [版本信息] 修复数据库中的版本格式: ${storedVersion['version']} -> $version + $versionCode');
-            
+
             // 更新数据库中的版本信息
             await dbService.saveVersion(
               version: version,
@@ -53,19 +69,19 @@ class UpdateService {
             );
           }
         }
-        
+
         logger.debug('📱 [版本信息] 从数据库获取: $version (代码: $versionCode)');
         return {
           'version': version,
           'versionCode': versionCode,
         };
       }
-      
-      // 数据库没有记录，从包信息获取
+
+      // 3. 数据库没有记录，从包信息获取
       final packageInfo = await PackageInfo.fromPlatform();
       String version = packageInfo.version;
       String buildNumber = packageInfo.buildNumber;
-      
+
       // 修复旧版本格式问题
       if (version.contains(RegExp(r'\d+\.\d+\.\d+\d{10}'))) {
         final match = RegExp(r'^(\d+\.\d+\.\d+)(\d{10})$').firstMatch(version);
@@ -75,7 +91,7 @@ class UpdateService {
           logger.debug('🔧 [版本信息] 修复包信息中的版本格式: ${packageInfo.version} -> $version + $buildNumber');
         }
       }
-      
+
       logger.debug('📱 [版本信息] 从包信息获取: $version (代码: $buildNumber)');
       return {
         'version': version,
@@ -90,12 +106,24 @@ class UpdateService {
     }
   }
 
-  /// 保存版本信息到本地数据库（升级成功后调用）
+  /// 保存版本信息到本地数据库和持久化文件（升级成功后调用）
   static Future<void> saveVersionToDatabase(UpdateInfo updateInfo) async {
     try {
       final platform = Platform.operatingSystem;
       final dbService = LocalDatabaseService();
+      final persistenceService = VersionPersistenceService();
       
+      // 1. 保存到持久化文件（PC端升级后不会丢失）
+      await persistenceService.saveVersion(
+        version: updateInfo.version,
+        versionCode: updateInfo.versionCode,
+        platform: platform,
+        fileSize: updateInfo.fileSize,
+        releaseNotes: updateInfo.releaseNotes,
+        releaseDate: updateInfo.releaseDate.toIso8601String(),
+      );
+      
+      // 2. 保存到本地数据库
       await dbService.saveVersion(
         version: updateInfo.version,
         versionCode: updateInfo.versionCode,
@@ -104,8 +132,8 @@ class UpdateService {
         releaseDate: updateInfo.releaseDate.toIso8601String(),
         platform: platform,
       );
-      
-      logger.info('✅ [版本保存] 版本信息已保存到数据库: ${updateInfo.version}');
+
+      logger.info('✅ [版本保存] 版本信息已保存: ${updateInfo.version}');
     } catch (e) {
       logger.error('❌ [版本保存] 保存失败: $e');
     }
@@ -155,6 +183,7 @@ class UpdateService {
 
   /// 分片下载服务实例
   final ChunkDownloadService _chunkDownloadService = ChunkDownloadService();
+
 
   /// 下载更新包（支持分片并行下载）
   /// [useChunkDownload] 是否使用分片下载，默认true
@@ -425,6 +454,7 @@ class UpdateService {
     }
   }
 
+
   /// 启动升级器（PC端）
   Future<bool> startUpdater(String updateFilePath) async {
     try {
@@ -661,6 +691,7 @@ exit
       return false;
     }
   }
+
 
   /// Windows 升级器
   /// 升级流程：
