@@ -14,10 +14,11 @@ class ApiConfig {
       return 'www.xn--wxtp0q.com';
     }
     // Debug 模式下根据平台选择不同的本地服务器
-    if (Platform.isMacOS) {
+    // 注意：在 macOS 上编译 iOS 应用时，Platform.isMacOS 为 false，Platform.isIOS 为 true
+    if (Platform.isMacOS || Platform.isIOS) {
       return '192.168.1.20';
     } else {
-      // Windows 和其他平台
+      // Windows、Android 和其他平台
       return '192.168.1.6';
     }
   }

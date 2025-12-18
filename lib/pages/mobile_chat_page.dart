@@ -1991,6 +1991,9 @@ class _MobileChatPageState extends State<MobileChatPage>
     final text = _messageController.text.trim();
     if (text.isEmpty || _token == null) return;
 
+    // 🔴 优化：先清空输入框，提升用户体验
+    _messageController.clear();
+
     // 立即置灰发送按钮
     setState(() {
       _isSending = true;
@@ -2200,12 +2203,9 @@ class _MobileChatPageState extends State<MobileChatPage>
         });
       }
 
-      // 清空输入框和引用消息
-      _messageController.clear();
+      // 清空引用消息和@提及（输入框已在开头清空）
       _quotedMessage = null;
       _quotedMessageId = null;
-
-      // 清空@提及
       _mentionedUserIds.clear();
     } catch (e) {
       logger.error('发送消息失败', error: e);
@@ -3343,6 +3343,14 @@ class _MobileChatPageState extends State<MobileChatPage>
                   isCaller: true,
                 );
               }
+              // 🔴 新增：处理通话拒绝的情况（接收方拒绝通话）
+              else if (result['callRejected'] == true) {
+                await _sendCallRejectedMessage(
+                  widget.userId,
+                  CallType.voice,
+                  isRejecter: true,
+                );
+              }
             }
           }
         }
@@ -3472,6 +3480,14 @@ class _MobileChatPageState extends State<MobileChatPage>
                   isCaller: true,
                 );
               }
+              // 🔴 新增：处理通话拒绝的情况（接收方拒绝通话）
+              else if (result['callRejected'] == true) {
+                await _sendCallRejectedMessage(
+                  widget.userId,
+                  CallType.video,
+                  isRejecter: true,
+                );
+              }
             }
           }
         }
@@ -3486,6 +3502,81 @@ class _MobileChatPageState extends State<MobileChatPage>
           ),
         );
       }
+    }
+  }
+
+  // 🔴 新增：发送通话拒绝消息
+  // isRejecter: true 表示是拒绝方（接收方），false 表示是发起方（收到拒绝通知）
+  Future<void> _sendCallRejectedMessage(
+    int targetUserId,
+    CallType callType, {
+    bool isRejecter = true,
+  }) async {
+    try {
+      // 发送给对方的消息内容
+      // 如果是接收方拒绝，发送给发起方显示"对方已拒绝"
+      // 如果是发起方收到拒绝通知，发送给接收方显示"已拒绝"
+      final contentToSend = isRejecter ? '对方已拒绝' : '已拒绝';
+
+      // 根据通话类型确定消息类型
+      final messageType = (callType == CallType.video)
+          ? 'call_rejected_video'
+          : 'call_rejected';
+
+      logger.debug('📞 [MobileChatPage] 发送通话拒绝消息:');
+      logger.debug('  - 目标用户ID: $targetUserId');
+      logger.debug('  - 消息内容: $contentToSend');
+      logger.debug('  - 是否为拒绝方: $isRejecter');
+      logger.debug('  - 通话类型: ${callType == CallType.video ? "视频" : "语音"}');
+
+      // 发送消息给对方
+      await _wsService.sendMessage(
+        receiverId: targetUserId,
+        content: contentToSend,
+        messageType: messageType,
+      );
+
+      logger.debug('✅ [MobileChatPage] 通话拒绝消息已发送给对方');
+
+      // 🔴 在拒绝方/发起方的聊天页面显示相应消息
+      if (mounted) {
+        final currentUserId = await Storage.getUserId();
+        if (currentUserId != null) {
+          // 拒绝方显示"已拒绝"，发起方显示"对方已拒绝"
+          final displayContent = isRejecter ? '已拒绝' : '对方已拒绝';
+          
+          final rejectMessage = MessageModel(
+            id: DateTime.now().millisecondsSinceEpoch,
+            senderId: currentUserId,
+            receiverId: targetUserId,
+            senderName: '',
+            receiverName: widget.displayName,
+            content: displayContent,
+            messageType: messageType,
+            isRead: true,
+            createdAt: DateTime.now(),
+          );
+
+          setState(() {
+            _messages.add(rejectMessage);
+          });
+
+          // 滚动到底部
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (_scrollController.hasClients) {
+              _scrollController.animateTo(
+                _scrollController.position.maxScrollExtent,
+                duration: const Duration(milliseconds: 300),
+                curve: Curves.easeOut,
+              );
+            }
+          });
+
+          logger.debug('📞 [MobileChatPage] 已在聊天页面添加"$displayContent"消息');
+        }
+      }
+    } catch (e) {
+      logger.error('❌ [MobileChatPage] 发送通话拒绝消息失败: $e');
     }
   }
 
@@ -4311,9 +4402,35 @@ class _MobileChatPageState extends State<MobileChatPage>
         callIcon = Icons.call_end; // 语音通话图标
       }
 
-      // 通话结束消息前增加"通话时长"
+      // 🔴 修复：根据当前用户是发送者还是接收者来决定显示内容
+      // 发送者看到的是"已拒绝"/"已取消"，接收者看到的是"对方已拒绝"/"对方已取消"
       String displayContent = message.content;
-      if ((message.messageType == 'call_ended' ||
+      final isSender = message.senderId == _currentUserId;
+      
+      // 处理拒绝消息
+      if (message.messageType == 'call_rejected' ||
+          message.messageType == 'call_rejected_video') {
+        if (isSender) {
+          // 发送者（拒绝方）看到"已拒绝"
+          displayContent = '已拒绝';
+        } else {
+          // 接收者（被拒绝方）看到"对方已拒绝"
+          displayContent = '对方已拒绝';
+        }
+      }
+      // 处理取消消息
+      else if (message.messageType == 'call_cancelled' ||
+               message.messageType == 'call_cancelled_video') {
+        if (isSender) {
+          // 发送者（取消方）看到"已取消"
+          displayContent = '已取消';
+        } else {
+          // 接收者（被取消方）看到"对方已取消"
+          displayContent = '对方已取消';
+        }
+      }
+      // 通话结束消息前增加"通话时长"
+      else if ((message.messageType == 'call_ended' ||
               message.messageType == 'call_ended_video') &&
           !displayContent.startsWith('通话时长')) {
         displayContent = '通话时长 ${displayContent}';

@@ -2002,6 +2002,29 @@ class _MobileHomePageState extends State<MobileHomePage>
     // 初始化 Agora 服务
     await _agoraService.initialize(currentUserId);
 
+    // 🔴 设置通话错误回调（处理对方拒绝通话等情况）
+    _agoraService.onError = (error) {
+      logger.debug('📞 [MobileHomePage] Agora 错误: $error');
+      
+      // 如果对方拒绝了通话，发送拒绝消息
+      if (error == '对方拒绝了通话') {
+        final targetUserId = _agoraService.currentCallUserId;
+        final callType = _agoraService.callType;
+        if (targetUserId != null && targetUserId != 0) {
+          logger.debug('📞 [MobileHomePage] 对方拒绝了通话，发送拒绝消息给: $targetUserId');
+          // 发起方收到拒绝通知，显示"对方已拒绝"
+          _sendCallRejectedMessage(targetUserId, callType, isRejecter: false);
+        }
+      }
+      
+      // 显示错误提示
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(error)),
+        );
+      }
+    };
+
     // 设置来电回调
     _agoraService.onIncomingCall = (userId, displayName, callType) {
       logger.debug('📞 Agora 来电回调被触发 - 用户: $displayName ($userId)');
@@ -2727,13 +2750,17 @@ class _MobileHomePageState extends State<MobileHomePage>
   }
 
   /// 发送通话拒绝消息
+  /// isRejecter: true 表示是拒绝方（接收方），false 表示是发起方（收到拒绝通知）
   Future<void> _sendCallRejectedMessage(
     int targetUserId,
-    CallType callType,
-  ) async {
+    CallType callType, {
+    bool isRejecter = true,
+  }) async {
     try {
-      // 发送给对方的消息内容（接收方拒绝，发送给发起方显示"对方已拒绝"）
-      final contentToSend = '对方已拒绝';
+      // 发送给对方的消息内容
+      // 如果是接收方拒绝，发送给发起方显示"对方已拒绝"
+      // 如果是发起方收到拒绝通知，发送给接收方显示"已拒绝"
+      final contentToSend = isRejecter ? '对方已拒绝' : '已拒绝';
 
       // 根据通话类型确定消息类型
       final messageType = (callType == CallType.video)
@@ -2743,6 +2770,7 @@ class _MobileHomePageState extends State<MobileHomePage>
       logger.debug('📞 [Mobile] 发送通话拒绝消息:');
       logger.debug('  - 目标用户ID: $targetUserId');
       logger.debug('  - 消息内容: $contentToSend');
+      logger.debug('  - 是否为拒绝方: $isRejecter');
       logger.debug('  - 通话类型: ${callType == CallType.video ? "视频" : "语音"}');
       logger.debug('  - 消息类型: $messageType');
 

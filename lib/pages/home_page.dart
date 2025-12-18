@@ -6702,6 +6702,7 @@ class _DesktopHomePageState extends State<DesktopHomePage> with WindowListener {
     String? fileName,
     bool autoScroll = true, // 是否自动滚动到底部
     int? tempMessageId, // 临时消息ID，用于替换加载消息
+    String? textContent, // 🔴 新增：文本内容（用于输入框已清空的情况）
   }) async {
     String content;
 
@@ -6712,7 +6713,8 @@ class _DesktopHomePageState extends State<DesktopHomePage> with WindowListener {
     } else if (messageType == 'video' && imageUrl != null) {
       content = imageUrl;
     } else {
-      content = _messageInputController.text.trim();
+      // 🔴 优化：优先使用传入的文本内容，否则从输入框读取
+      content = textContent ?? _messageInputController.text.trim();
       if (content.isEmpty || _currentChatUserId == null) {
         return false;
       }
@@ -6806,10 +6808,7 @@ class _DesktopHomePageState extends State<DesktopHomePage> with WindowListener {
                 _messages.add(newMessage);
               }
               _isSendingMessage = false;
-              // 清空输入框和引用消息
-              if (messageType == 'text' || finalMessageType == 'quoted') {
-                _messageInputController.clear();
-              }
+              // 清空引用消息（输入框已在发送前清空）
               _quotedMessage = null;
             });
 
@@ -6967,11 +6966,7 @@ class _DesktopHomePageState extends State<DesktopHomePage> with WindowListener {
       }
 
       if (success) {
-        // 如果是文本消息或引用消息，清空输入框和引用消
-        if (messageType == 'text' || finalMessageType == 'quoted') {
-          _messageInputController.clear();
-        }
-
+        // 输入框已在发送前清空，这里只需要清空引用消息和@信息
         setState(() {
           _isSendingMessage = false;
           // 清空引用消息和@信息
@@ -7140,6 +7135,11 @@ class _DesktopHomePageState extends State<DesktopHomePage> with WindowListener {
     // 如果既没有图片、视频、文件也没有文本，不发
     if (!hasImages && !hasVideos && !hasFiles && !hasText) {
       return;
+    }
+
+    // 🔴 优化：先清空输入框，提升用户体验
+    if (hasText) {
+      _messageInputController.clear();
     }
 
     try {
@@ -7360,6 +7360,7 @@ class _DesktopHomePageState extends State<DesktopHomePage> with WindowListener {
         await _sendMessage(
           messageType: 'text',
           autoScroll: false, // 文本发送时不滚动
+          textContent: textContent, // 🔴 传入保存的文本内容（输入框已清空）
         );
       }
 

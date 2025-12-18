@@ -1108,7 +1108,14 @@ func (mc *MessageController) sendOfflineNotification(userID int) {
 }
 
 // sendOfflineMessages 发送离线消息
+// 使用 private_message_synced 表记录已同步的消息，避免重复推送
 func (mc *MessageController) sendOfflineMessages(client *ws.Client) {
+	// 确保 private_message_synced 表存在
+	mc.ensurePrivateMessageSyncedTableExists()
+
+	userIDStr := strconv.Itoa(client.UserID)
+
+	// 查询未同步的离线消息（排除已同步的消息）
 	query := `
 		SELECT id, sender_id, receiver_id, sender_name, receiver_name, sender_avatar, receiver_avatar, content, message_type, file_name, quoted_message_id, quoted_message_content, is_read, created_at
 		FROM messages
@@ -1116,10 +1123,10 @@ func (mc *MessageController) sendOfflineMessages(client *ws.Client) {
 			AND is_read = false
 			AND status != 'recalled'
 			AND (deleted_by_users = '' OR deleted_by_users NOT LIKE '%' || $2 || '%')
+			AND id NOT IN (SELECT message_id FROM private_message_synced WHERE user_id = $1)
 		ORDER BY created_at ASC
 	`
 
-	userIDStr := strconv.Itoa(client.UserID)
 	rows, err := db.DB.Query(query, client.UserID, userIDStr)
 	if err != nil {
 		utils.LogDebug("查询离线消息失败: %v", err)
@@ -1128,6 +1135,7 @@ func (mc *MessageController) sendOfflineMessages(client *ws.Client) {
 	defer rows.Close()
 
 	var messages []models.Message
+	var messageIDs []int
 	for rows.Next() {
 		var msg models.Message
 		err := rows.Scan(
@@ -1151,6 +1159,7 @@ func (mc *MessageController) sendOfflineMessages(client *ws.Client) {
 			continue
 		}
 		messages = append(messages, msg)
+		messageIDs = append(messageIDs, msg.ID)
 	}
 
 	if len(messages) > 0 {
@@ -1163,9 +1172,197 @@ func (mc *MessageController) sendOfflineMessages(client *ws.Client) {
 		client.Send <- msgBytes
 		utils.LogDebug("已向用户 %d 发送 %d 条离线消息", client.UserID, len(messages))
 
-		// 注意：这里不标记为已读，因为用户还没有实际阅读
-		// 客户端会使用 INSERT OR IGNORE 来处理重复消息
-		// 当用户真正阅读消息时，客户端会调用 MarkMessagesAsRead API
+		// 记录已同步的消息ID，避免下次重复推送
+		mc.markPrivateMessagesSynced(client.UserID, messageIDs)
+	}
+
+	// 发送离线群聊消息
+	mc.sendOfflineGroupMessages(client)
+}
+
+// ensurePrivateMessageSyncedTableExists 确保 private_message_synced 表存在
+func (mc *MessageController) ensurePrivateMessageSyncedTableExists() {
+	createTableQuery := `
+		CREATE TABLE IF NOT EXISTS private_message_synced (
+			id SERIAL PRIMARY KEY,
+			message_id INTEGER NOT NULL,
+			user_id INTEGER NOT NULL,
+			synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(message_id, user_id)
+		)
+	`
+	_, err := db.DB.Exec(createTableQuery)
+	if err != nil {
+		utils.LogDebug("创建 private_message_synced 表失败: %v", err)
+	}
+}
+
+// markPrivateMessagesSynced 记录已同步的私聊消息
+func (mc *MessageController) markPrivateMessagesSynced(userID int, messageIDs []int) {
+	if len(messageIDs) == 0 {
+		return
+	}
+
+	// 批量插入已同步记录
+	for _, msgID := range messageIDs {
+		insertQuery := `
+			INSERT INTO private_message_synced (message_id, user_id)
+			VALUES ($1, $2)
+			ON CONFLICT (message_id, user_id) DO NOTHING
+		`
+		_, err := db.DB.Exec(insertQuery, msgID, userID)
+		if err != nil {
+			utils.LogDebug("记录已同步消息失败: message_id=%d, user_id=%d, error=%v", msgID, userID, err)
+		}
+	}
+	utils.LogDebug("已记录 %d 条私聊消息为已同步 (user_id=%d)", len(messageIDs), userID)
+}
+
+// sendOfflineGroupMessages 发送离线群聊消息
+func (mc *MessageController) sendOfflineGroupMessages(client *ws.Client) {
+	// 1. 获取用户所属的所有群组
+	groupQuery := `
+		SELECT group_id FROM group_members WHERE user_id = $1
+	`
+	groupRows, err := db.DB.Query(groupQuery, client.UserID)
+	if err != nil {
+		utils.LogDebug("查询用户群组失败: %v", err)
+		return
+	}
+	defer groupRows.Close()
+
+	var groupIDs []int
+	for groupRows.Next() {
+		var groupID int
+		if err := groupRows.Scan(&groupID); err != nil {
+			continue
+		}
+		groupIDs = append(groupIDs, groupID)
+	}
+
+	if len(groupIDs) == 0 {
+		utils.LogDebug("用户 %d 没有加入任何群组，跳过离线群聊消息推送", client.UserID)
+		return
+	}
+
+	utils.LogDebug("用户 %d 所属群组: %v，开始查询离线群聊消息", client.UserID, groupIDs)
+
+	// 2. 对每个群组查询未读消息
+	userIDStr := strconv.Itoa(client.UserID)
+	for _, groupID := range groupIDs {
+		// 查询该群组中用户未读的消息（排除自己发送的消息和已删除的消息）
+		msgQuery := `
+			SELECT gm.id, gm.group_id, gm.sender_id, gm.sender_name, gm.sender_nickname, 
+			       gm.sender_full_name, gm.sender_avatar, gm.content, gm.message_type, 
+			       gm.file_name, gm.quoted_message_id, gm.quoted_message_content,
+			       gm.mentioned_user_ids, gm.mentions, gm.voice_duration, gm.status, gm.created_at
+			FROM group_messages gm
+			WHERE gm.group_id = $1
+				AND gm.sender_id != $2
+				AND gm.status != 'recalled'
+				AND (gm.deleted_by_users = '' OR gm.deleted_by_users NOT LIKE '%' || $3 || '%')
+				AND gm.id NOT IN (
+					SELECT group_message_id FROM group_message_reads WHERE user_id = $2
+				)
+			ORDER BY gm.created_at ASC
+		`
+
+		msgRows, err := db.DB.Query(msgQuery, groupID, client.UserID, userIDStr)
+		if err != nil {
+			utils.LogDebug("查询群组 %d 离线消息失败: %v", groupID, err)
+			continue
+		}
+
+		var messages []map[string]interface{}
+		for msgRows.Next() {
+			var (
+				id                   int
+				gid                  int
+				senderID             int
+				senderName           string
+				senderNickname       sql.NullString
+				senderFullName       sql.NullString
+				senderAvatar         sql.NullString
+				content              string
+				messageType          string
+				fileName             sql.NullString
+				quotedMessageID      sql.NullInt64
+				quotedMessageContent sql.NullString
+				mentionedUserIDs     sql.NullString
+				mentions             sql.NullString
+				voiceDuration        sql.NullInt64
+				status               string
+				createdAt            time.Time
+			)
+
+			err := msgRows.Scan(
+				&id, &gid, &senderID, &senderName, &senderNickname,
+				&senderFullName, &senderAvatar, &content, &messageType,
+				&fileName, &quotedMessageID, &quotedMessageContent,
+				&mentionedUserIDs, &mentions, &voiceDuration, &status, &createdAt,
+			)
+			if err != nil {
+				utils.LogDebug("扫描群组消息失败: %v", err)
+				continue
+			}
+
+			msg := map[string]interface{}{
+				"id":           id,
+				"group_id":     gid,
+				"sender_id":    senderID,
+				"sender_name":  senderName,
+				"content":      content,
+				"message_type": messageType,
+				"status":       status,
+				"created_at":   createdAt.Format(time.RFC3339),
+				"is_read":      false,
+			}
+
+			if senderNickname.Valid {
+				msg["sender_nickname"] = senderNickname.String
+			}
+			if senderFullName.Valid {
+				msg["sender_full_name"] = senderFullName.String
+			}
+			if senderAvatar.Valid {
+				msg["sender_avatar"] = senderAvatar.String
+			}
+			if fileName.Valid {
+				msg["file_name"] = fileName.String
+			}
+			if quotedMessageID.Valid {
+				msg["quoted_message_id"] = quotedMessageID.Int64
+			}
+			if quotedMessageContent.Valid {
+				msg["quoted_message_content"] = quotedMessageContent.String
+			}
+			if mentionedUserIDs.Valid {
+				msg["mentioned_user_ids"] = mentionedUserIDs.String
+			}
+			if mentions.Valid {
+				msg["mentions"] = mentions.String
+			}
+			if voiceDuration.Valid {
+				msg["voice_duration"] = voiceDuration.Int64
+			}
+
+			messages = append(messages, msg)
+		}
+		msgRows.Close()
+
+		if len(messages) > 0 {
+			// 发送该群组的离线消息
+			offlineGroupMsg := models.WSMessage{
+				Type: "offline_group_messages",
+				Data: map[string]interface{}{
+					"group_id": groupID,
+					"messages": messages,
+				},
+			}
+			msgBytes, _ := json.Marshal(offlineGroupMsg)
+			client.Send <- msgBytes
+			utils.LogDebug("已向用户 %d 发送群组 %d 的 %d 条离线消息", client.UserID, groupID, len(messages))
+		}
 	}
 }
 

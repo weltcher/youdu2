@@ -497,8 +497,8 @@ mixin CallHandlerMixin<T extends StatefulWidget> on State<T> {
         final token = await Storage.getToken();
         if (token != null && token.isNotEmpty) {
           final userInfo = await ApiService.getUserInfo(
+            contact.userId,
             token: token,
-            userId: contact.userId,
           );
           if (userInfo['code'] == 0) {
             final data = userInfo['data'];

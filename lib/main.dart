@@ -327,24 +327,24 @@ class _InitialRouteCheckerState extends State<_InitialRouteChecker> {
     // 这样用户可以先看到界面，权限请求在后台进行
     _checkLoginStatus();
 
-    // 🔐 第二步：在移动端请求必要的权限
-    // 延迟执行，确保页面已经渲染完成
-    if (Platform.isAndroid || Platform.isIOS) {
-      try {
-        logger.info('📱 移动端应用，准备请求权限...');
-        // 等待页面完全加载后再请求权限
-        await Future.delayed(const Duration(milliseconds: 500));
-        if (mounted) {
-          logger.info('📱 开始请求权限...');
-          // 异步执行权限请求，不阻塞UI
-          PermissionService().requestInitialPermissions(context).catchError((e) {
-            logger.error('❌ 请求权限失败: $e');
-          });
-        }
-      } catch (e) {
-        logger.error('❌ 请求权限失败: $e');
-      }
-    }
+    // 🔐 第二步：在移动端请求必要的权限（已禁用启动时的权限弹窗）
+    // 权限将在需要时按需请求，而不是启动时统一请求
+    // if (Platform.isAndroid || Platform.isIOS) {
+    //   try {
+    //     logger.info('📱 移动端应用，准备请求权限...');
+    //     // 等待页面完全加载后再请求权限
+    //     await Future.delayed(const Duration(milliseconds: 500));
+    //     if (mounted) {
+    //       logger.info('📱 开始请求权限...');
+    //       // 异步执行权限请求，不阻塞UI
+    //       PermissionService().requestInitialPermissions(context).catchError((e) {
+    //         logger.error('❌ 请求权限失败: $e');
+    //       });
+    //     }
+    //   } catch (e) {
+    //     logger.error('❌ 请求权限失败: $e');
+    //   }
+    // }
   }
 
   /// 检查登录状态和自动登录配置
