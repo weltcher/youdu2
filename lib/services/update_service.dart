@@ -8,6 +8,7 @@ import 'package:path/path.dart' as path;
 import 'package:permission_handler/permission_handler.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+
 import '../models/update_info.dart';
 import '../config/api_config.dart';
 import '../utils/logger.dart';
@@ -699,7 +700,6 @@ exit
       return false;
     }
   }
-
 
   /// Windows 升级器
   /// 升级流程：
