@@ -22,6 +22,7 @@ class MessageService {
     required int contactId,
     int page = 1,
     int pageSize = 50,
+    int? beforeId, // 🔴 新增：获取此ID之前的消息（用于加载更多历史）
   }) async {
     try {
       // 获取当前用户ID
@@ -36,6 +37,7 @@ class MessageService {
         userId1: currentUserId,
         userId2: contactId,
         limit: pageSize,
+        beforeId: beforeId,
       );
 
       // 转换为MessageModel
@@ -688,6 +690,7 @@ class MessageService {
     required int groupId,
     int page = 1,
     int pageSize = 50,
+    int? beforeId, // 🔴 新增：获取此ID之前的消息（用于加载更多历史）
   }) async {
     try {
       // 获取当前用户ID，用于过滤已删除的消息
@@ -698,6 +701,7 @@ class MessageService {
         groupId: groupId,
         userId: currentUserId, // 传入用户ID以过滤该用户已删除的消息
         limit: pageSize,
+        beforeId: beforeId,
       );
 
       // 🔍 调试：查看数据库返回的原始数据

@@ -36,6 +36,7 @@ type Config struct {
 	OSSAccessKey string
 	OSSSecretKey string
 	OSSBucket    string
+	OSSCDNDomain string
 	// 数据库配置
 	DBHost     string
 	DBPort     string
@@ -322,18 +323,20 @@ func loadConfig(envFile, serverURL string, skipOSSCheck bool) error {
 	}
 
 	// 根据环境选择OSS配置
-	var ossEndpoint, ossAccessKey, ossSecretKey, ossBucket string
+	var ossEndpoint, ossAccessKey, ossSecretKey, ossBucket, ossCDNDomain string
 	if appEnv == "development" || appEnv == "debug" {
 		ossEndpoint = os.Getenv("TEST_S3_ENDPOINT")
 		ossAccessKey = os.Getenv("TEST_S3_ACCESS_KEY")
 		ossSecretKey = os.Getenv("TEST_S3_SECRET_KEY")
 		ossBucket = os.Getenv("TEST_S3_BUCKET")
+		ossCDNDomain = os.Getenv("TEST_S3_CDN_DOMAIN")
 		fmt.Printf("🔧 Debug模式: 使用测试OSS配置 (Bucket: %s)\n", ossBucket)
 	} else {
 		ossEndpoint = os.Getenv("S3_ENDPOINT")
 		ossAccessKey = os.Getenv("S3_ACCESS_KEY")
 		ossSecretKey = os.Getenv("S3_SECRET_KEY")
 		ossBucket = os.Getenv("S3_BUCKET")
+		ossCDNDomain = os.Getenv("S3_CDN_DOMAIN")
 		fmt.Printf("🚀 生产模式: 使用正式OSS配置 (Bucket: %s)\n", ossBucket)
 	}
 
@@ -343,6 +346,7 @@ func loadConfig(envFile, serverURL string, skipOSSCheck bool) error {
 		OSSAccessKey: ossAccessKey,
 		OSSSecretKey: ossSecretKey,
 		OSSBucket:    ossBucket,
+		OSSCDNDomain: ossCDNDomain,
 		DBHost:       os.Getenv("DB_HOST"),
 		DBPort:       os.Getenv("DB_PORT"),
 		DBUser:       os.Getenv("DB_USER"),
@@ -679,9 +683,14 @@ func uploadToOSS(filePath, platform, version string) (ossKey, fileURL string, fi
 	}
 	fmt.Printf("   ✅ 上传完成!\n")
 
-	endpointHost := strings.TrimPrefix(config.OSSEndpoint, "https://")
-	endpointHost = strings.TrimPrefix(endpointHost, "http://")
-	fileURL = fmt.Sprintf("https://%s.%s/%s", config.OSSBucket, endpointHost, ossKey)
+	// 构建文件URL - 优先使用CDN域名
+	if config.OSSCDNDomain != "" {
+		fileURL = fmt.Sprintf("https://%s/%s", config.OSSCDNDomain, ossKey)
+	} else {
+		endpointHost := strings.TrimPrefix(config.OSSEndpoint, "https://")
+		endpointHost = strings.TrimPrefix(endpointHost, "http://")
+		fileURL = fmt.Sprintf("https://%s.%s/%s", config.OSSBucket, endpointHost, ossKey)
+	}
 
 	return ossKey, fileURL, fileSize, fileHash, nil
 }

@@ -121,9 +121,17 @@ func (ctrl *UploadController) UploadImage(c *gin.Context) {
 	}
 
 	// 构建文件URL
-	// 如果是私有bucket，需要生成签名URL
-	// 如果是公共bucket，可以直接拼接URL
-	fileURL := fmt.Sprintf("https://%s.%s/%s", bucketName, strings.TrimPrefix(endpoint, "https://"), objectKey)
+	// 优先使用CDN域名，如果没有配置则使用OSS原始域名
+	cdnDomain := os.Getenv("S3_CDN_DOMAIN")
+	if cdnDomain == "" {
+		cdnDomain = viper.GetString("S3_CDN_DOMAIN")
+	}
+	var fileURL string
+	if cdnDomain != "" {
+		fileURL = fmt.Sprintf("https://%s/%s", cdnDomain, objectKey)
+	} else {
+		fileURL = fmt.Sprintf("https://%s.%s/%s", bucketName, strings.TrimPrefix(endpoint, "https://"), objectKey)
+	}
 
 	utils.SuccessWithMessage(c, "文件上传成功", gin.H{
 		"url":       fileURL,
@@ -212,8 +220,17 @@ func (ctrl *UploadController) UploadFile(c *gin.Context) {
 		return
 	}
 
-	// 构建文件URL
-	fileURL := fmt.Sprintf("https://%s.%s/%s", bucketName, strings.TrimPrefix(endpoint, "https://"), objectKey)
+	// 构建文件URL - 优先使用CDN域名
+	cdnDomain := os.Getenv("S3_CDN_DOMAIN")
+	if cdnDomain == "" {
+		cdnDomain = viper.GetString("S3_CDN_DOMAIN")
+	}
+	var fileURL string
+	if cdnDomain != "" {
+		fileURL = fmt.Sprintf("https://%s/%s", cdnDomain, objectKey)
+	} else {
+		fileURL = fmt.Sprintf("https://%s.%s/%s", bucketName, strings.TrimPrefix(endpoint, "https://"), objectKey)
+	}
 
 	utils.SuccessWithMessage(c, "文件上传成功", gin.H{
 		"url":       fileURL,
@@ -316,8 +333,17 @@ func (ctrl *UploadController) UploadAvatar(c *gin.Context) {
 		return
 	}
 
-	// 构建文件URL
-	fileURL := fmt.Sprintf("https://%s.%s/%s", bucketName, strings.TrimPrefix(endpoint, "https://"), objectKey)
+	// 构建文件URL - 优先使用CDN域名
+	cdnDomain := os.Getenv("S3_CDN_DOMAIN")
+	if cdnDomain == "" {
+		cdnDomain = viper.GetString("S3_CDN_DOMAIN")
+	}
+	var fileURL string
+	if cdnDomain != "" {
+		fileURL = fmt.Sprintf("https://%s/%s", cdnDomain, objectKey)
+	} else {
+		fileURL = fmt.Sprintf("https://%s.%s/%s", bucketName, strings.TrimPrefix(endpoint, "https://"), objectKey)
+	}
 
 	utils.SuccessWithMessage(c, "头像上传成功", gin.H{
 		"url":       fileURL,
@@ -542,8 +568,17 @@ func (ctrl *UploadController) UploadVideoChunk(c *gin.Context) {
 			return
 		}
 
-		// 构建文件URL
-		fileURL := fmt.Sprintf("https://%s.%s/%s", bucketName, strings.TrimPrefix(endpoint, "https://"), objectKey)
+		// 构建文件URL - 优先使用CDN域名
+		cdnDomain := os.Getenv("S3_CDN_DOMAIN")
+		if cdnDomain == "" {
+			cdnDomain = viper.GetString("S3_CDN_DOMAIN")
+		}
+		var fileURL string
+		if cdnDomain != "" {
+			fileURL = fmt.Sprintf("https://%s/%s", cdnDomain, objectKey)
+		} else {
+			fileURL = fmt.Sprintf("https://%s.%s/%s", bucketName, strings.TrimPrefix(endpoint, "https://"), objectKey)
+		}
 
 		// 提取纯文件名（去除路径）
 		baseFileName := filepath.Base(fileName)

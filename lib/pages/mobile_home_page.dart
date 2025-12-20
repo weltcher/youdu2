@@ -2180,8 +2180,11 @@ class _MobileHomePageState extends State<MobileHomePage>
         });
 
         // 🔴 发送通话结束消息
-        // ⚠️ 注意：如果通话是从 mobile_chat_page 发起的，消息会在聊天页面发送，这里不应该重复发送
-        if (callDuration > 0) {
+        // ⚠️ 注意：只有本地主动挂断时才发送通话结束消息，避免双方都发送导致重复
+        final isLocalHangup = _agoraService.isLocalHangup;
+        logger.debug('🎯 [Mobile] 是否本地主动挂断: $isLocalHangup');
+        
+        if (callDuration > 0 && isLocalHangup) {
           // 🔴 修复：从 agoraService 读取最后的群组ID和通话类型
           // 因为从 mobile_chat_page 发起的群组通话，mobile_home_page 的标志可能未设置
           final lastGroupId = _agoraService.lastGroupId;
@@ -2214,19 +2217,31 @@ class _MobileHomePageState extends State<MobileHomePage>
               !isInitiatedFromHome) {
             // 从聊天页面发起的群组通话，由聊天页面负责发送消息
             logger.debug('🎯 [Mobile] 从聊天页面发起的群组通话，跳过发送（由聊天页面处理）');
-          } else if (_currentCallUserId != null && _currentCallUserId != 0) {
-            // 一对一通话：发送私聊消息
-            logger.debug('🎯 [Mobile] 发送一对一通话结束消息，时长: $callDuration 秒');
-            await _sendCallEndedMessage(
-              _currentCallUserId!,
-              callDuration,
-              effectiveCallType,
-            );
-            // 🔴 标记消息已发送，防止VoiceCallPage返回后重复发送
-            _callEndedMessageSent = true;
           } else {
-            logger.debug('🎯 [Mobile] 无有效的目标用户或群组，跳过发送消息');
+            // 🔴 修复：优先使用 agoraService 中保存的 lastCallUserId
+            // 因为从 mobile_chat_page 发起的通话，mobile_home_page 的 _currentCallUserId 可能未设置
+            logger.debug('🎯 [Mobile] 进入一对一通话分支');
+            final lastCallUserIdFromService = _agoraService.lastCallUserId;
+            logger.debug('🎯 [Mobile] 读取 lastCallUserId: $lastCallUserIdFromService, _currentCallUserId: $_currentCallUserId');
+            final effectiveCallUserId = lastCallUserIdFromService ?? _currentCallUserId;
+            logger.debug('🎯 [Mobile] effectiveCallUserId: $effectiveCallUserId');
+            
+            if (effectiveCallUserId != null && effectiveCallUserId != 0) {
+              // 一对一通话：发送私聊消息
+              logger.debug('🎯 [Mobile] 发送一对一通话结束消息，时长: $callDuration 秒, 目标用户: $effectiveCallUserId');
+              await _sendCallEndedMessage(
+                effectiveCallUserId,
+                callDuration,
+                effectiveCallType,
+              );
+              // 🔴 标记消息已发送，防止VoiceCallPage返回后重复发送
+              _callEndedMessageSent = true;
+            } else {
+              logger.debug('🎯 [Mobile] 无有效的目标用户或群组，跳过发送消息');
+            }
           }
+        } else if (callDuration > 0 && !isLocalHangup) {
+          logger.debug('🎯 [Mobile] 对方挂断，不发送通话结束消息（由对方发送）');
         }
 
         // 重置群组通话标志
@@ -2462,8 +2477,10 @@ class _MobileHomePageState extends State<MobileHomePage>
                           setState(() {
                             _showCallFloatingButton = false;
                           });
-                          // 🔴 修复：检查消息是否已在onCallEnded回调中发送，避免重复发送
-                          if (!_callEndedMessageSent) {
+                          // 🔴 修复：只有本地主动挂断时才发送消息，避免双方都发送
+                          // 检查消息是否已在onCallEnded回调中发送，或者是否是对方挂断
+                          final isLocalHangup = _agoraService.isLocalHangup;
+                          if (!_callEndedMessageSent && isLocalHangup) {
                             final callDuration =
                                 result['callDuration'] as int? ?? 0;
                             final returnedCallType =
@@ -2474,7 +2491,7 @@ class _MobileHomePageState extends State<MobileHomePage>
                               returnedCallType ?? callType,
                             );
                           } else {
-                            logger.debug('🎯 [Mobile] 通话结束消息已在onCallEnded中发送，跳过重复发送');
+                            logger.debug('🎯 [Mobile] 通话结束消息已发送或对方挂断，跳过发送');
                           }
                           // 重置标志
                           _callEndedMessageSent = false;
@@ -3330,12 +3347,15 @@ class _MobileHomePageState extends State<MobileHomePage>
                     logger.debug('📱 [Mobile] ✅ 悬浮按钮已隐藏');
 
                     if (result['callEnded'] == true) {
-                      // 🔴 修复：检查消息是否已在onCallEnded回调中发送，避免重复发送
+                      // 🔴 修复：只有本地主动挂断时才发送消息，避免双方都发送
+                      final isLocalHangup = _agoraService.isLocalHangup;
                       if (_callEndedMessageSent) {
                         logger.debug('🎯 [Mobile] 通话结束消息已在onCallEnded中发送，跳过重复发送');
                         _callEndedMessageSent = false;
+                      } else if (!isLocalHangup) {
+                        logger.debug('🎯 [Mobile] 对方挂断，不发送通话结束消息');
                       } else {
-                        // 正常结束通话
+                        // 正常结束通话（本地主动挂断）
                         final callDuration = result['callDuration'] as int? ?? 0;
                         final returnedCallType = result['callType'] as CallType?;
 
@@ -3998,6 +4018,15 @@ class _MobileChatListPageState extends State<MobileChatListPage> {
         MobileHomePage._cachedContacts = List.from(contacts);
         MobileHomePage._cacheTimestamp = DateTime.now();
         logger.debug('💾 缓存已更新 (${contacts.length}条，已过滤文件传输助手)');
+        
+        // 🚀 后台预加载所有会话的消息缓存（不阻塞UI）
+        final currentUserId = await Storage.getUserId();
+        if (currentUserId != null && contacts.isNotEmpty) {
+          unawaited(MobileChatPage.preloadMessagesCache(
+            contacts: contacts,
+            currentUserId: currentUserId,
+          ));
+        }
       }
     } catch (e) {
       logger.error('加载最近联系人失败: $e');

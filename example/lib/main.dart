@@ -43,7 +43,7 @@ class _MyHomePageState extends State<MyHomePage> {
 
   // 视频 URL
   final String _videoUrl =
-      'https://chat-youdu-2.oss-cn-hongkong.aliyuncs.com/videos/1762769596_1762768330_123.mp4';
+      'https://xn--wxtp0q.vip/videos/1762769596_1762768330_123.mp4';
 
   @override
   void initState() {

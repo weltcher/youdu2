@@ -63,6 +63,7 @@ import '../services/local_database_service.dart';
 import '../models/message_model.dart';
 import '../models/group_model.dart';
 import '../models/contact_model.dart';
+import '../models/recent_contact_model.dart';
 import '../utils/logger.dart';
 import '../utils/storage.dart';
 import '../utils/mobile_storage_permission_helper.dart';
@@ -111,8 +112,8 @@ class MobileChatPage extends StatefulWidget {
     this.onDoNotDisturbChanged, // 🔴 新增免打扰状态变化回调
   });
 
-  // 消息缓存：保存最新15条消息（静态变量，跨实例共享）
-  static const int _cacheSize = 15;
+  // 🔴 消息缓存：保存所有已加载的消息（静态变量，跨实例共享）
+  // 不再限制缓存大小，保存所有已加载的历史消息
   static final Map<String, List<MessageModel>> _messageCache = {};
   
   // 🔴 聊天页面打开标志（公共静态变量，用于避免与聊天列表重复处理 message_sent）
@@ -156,7 +157,123 @@ class MobileChatPage extends StatefulWidget {
 
   /// 设置消息缓存（公共静态方法，供外部访问）
   static void setMessageCache(String cacheKey, List<MessageModel> messages) {
-    _messageCache[cacheKey] = messages;
+    _messageCache[cacheKey] = List.from(messages);
+  }
+  
+  /// 获取消息缓存（公共静态方法，供外部访问）
+  static List<MessageModel>? getMessageCache(String cacheKey) {
+    return _messageCache[cacheKey];
+  }
+  
+  /// 更新消息缓存（在开头插入历史消息，带去重）
+  static void prependToCache(String cacheKey, List<MessageModel> olderMessages) {
+    if (_messageCache.containsKey(cacheKey)) {
+      final existingMessages = _messageCache[cacheKey]!;
+      // 🔴 过滤掉已存在的消息（通过id、serverId或内容+时间去重）
+      final newMessages = olderMessages.where((newMsg) {
+        return !existingMessages.any((existing) => _isSameMessage(existing, newMsg));
+      }).toList();
+      
+      if (newMessages.isNotEmpty) {
+        _messageCache[cacheKey]!.insertAll(0, newMessages);
+      }
+    } else {
+      _messageCache[cacheKey] = List.from(olderMessages);
+    }
+  }
+  
+  /// 追加新消息到缓存末尾（带去重）
+  static void appendToCache(String cacheKey, MessageModel message) {
+    if (_messageCache.containsKey(cacheKey)) {
+      // 🔴 检查是否已存在（通过id、serverId或内容+时间去重）
+      final exists = _messageCache[cacheKey]!.any((m) => _isSameMessage(m, message));
+      if (!exists) {
+        _messageCache[cacheKey]!.add(message);
+      }
+    } else {
+      _messageCache[cacheKey] = [message];
+    }
+  }
+  
+  /// 判断两条消息是否相同（用于去重）
+  static bool _isSameMessage(MessageModel a, MessageModel b) {
+    // 1. 如果id相同，认为是同一条消息
+    if (a.id == b.id) return true;
+    
+    // 2. 如果serverId相同且不为null，认为是同一条消息
+    if (a.serverId != null && a.serverId == b.serverId) return true;
+    
+    // 3. 如果内容、发送者、接收者、消息类型和时间都相同，认为是同一条消息
+    // （用于处理本地临时消息和服务器返回消息的情况）
+    if (a.content == b.content &&
+        a.senderId == b.senderId &&
+        a.receiverId == b.receiverId &&
+        a.messageType == b.messageType) {
+      // 时间差在5秒内认为是同一条消息
+      final timeDiff = a.createdAt.difference(b.createdAt).inSeconds.abs();
+      if (timeDiff <= 5) return true;
+    }
+    
+    return false;
+  }
+
+  /// 预加载所有会话的消息缓存（静态方法，供会话列表页面调用）
+  /// 在后台并行加载，不阻塞UI
+  static Future<void> preloadMessagesCache({
+    required List<RecentContactModel> contacts,
+    required int currentUserId,
+  }) async {
+    logger.debug('🚀 [预加载] 开始预加载 ${contacts.length} 个会话的消息缓存');
+    
+    final messageService = MessageService();
+    int loadedCount = 0;
+    
+    // 并行加载所有会话的消息（限制并发数为5）
+    final futures = <Future>[];
+    for (final contact in contacts) {
+      futures.add(() async {
+        try {
+          String cacheKey;
+          List<MessageModel> messages;
+          
+          if (contact.isGroup && contact.groupId != null) {
+            // 群聊
+            cacheKey = 'group_${contact.groupId}';
+            // 检查缓存是否已存在
+            if (_messageCache.containsKey(cacheKey)) {
+              return;
+            }
+            messages = await messageService.getGroupMessageList(
+              groupId: contact.groupId!,
+              pageSize: 20,
+            );
+          } else {
+            // 私聊
+            cacheKey = 'user_${contact.userId}_$currentUserId';
+            // 检查缓存是否已存在
+            if (_messageCache.containsKey(cacheKey)) {
+              return;
+            }
+            messages = await messageService.getMessages(
+              contactId: contact.userId,
+              pageSize: 20,
+            );
+          }
+          
+          if (messages.isNotEmpty) {
+            // 🔴 保存所有消息到缓存（不再限制大小）
+            _messageCache[cacheKey] = List.from(messages);
+            loadedCount++;
+          }
+        } catch (e) {
+          logger.debug('⚠️ [预加载] 加载会话消息失败: ${contact.displayName}, error: $e');
+        }
+      }());
+    }
+    
+    // 等待所有加载完成
+    await Future.wait(futures);
+    logger.debug('✅ [预加载] 完成，共加载 $loadedCount 个会话的消息缓存');
   }
 
   @override
@@ -208,6 +325,11 @@ class _MobileChatPageState extends State<MobileChatPage>
   int _pendingMediaCount = 0; // 待加载的媒体数量
   int _loadedMediaCount = 0; // 已加载的媒体数量
   final Set<int> _loadedMediaIds = {}; // 已加载的媒体消息ID（防止重复计数）
+  
+  // 🔴 加载更多历史消息状态
+  bool _isLoadingHistory = false; // 是否正在加载历史消息
+  bool _hasMoreHistory = true; // 是否还有更多历史消息
+  int _currentPage = 1; // 当前页码
 
   // 输入状态
   bool _isOtherTyping = false;
@@ -268,25 +390,21 @@ class _MobileChatPageState extends State<MobileChatPage>
   }
 
   Future<void> _initialize() async {
-    _currentUserId = await Storage.getUserId();
-    _token = await Storage.getToken();
-    _currentUserAvatar = await Storage.getAvatar(); // 加载当前用户头像
-
-    // 加载群组信息（如果是群聊）
-    if (widget.isGroup && widget.groupId != null) {
-      await _loadGroupInfo();
-    }
-
-    // 加载消息免打扰状态
-    await _loadDoNotDisturbStatus();
+    // 🚀 并行加载基础信息（这些是必需的）
+    final results = await Future.wait([
+      Storage.getUserId(),
+      Storage.getToken(),
+      Storage.getAvatar(),
+    ]);
     
-    // 加载置顶聊天状态
-    await _loadPinStatus();
+    _currentUserId = results[0] as int?;
+    _token = results[1] as String?;
+    _currentUserAvatar = results[2] as String?;
 
-    // 加载消息历史
+    // 🚀 立即加载消息（最重要，优先执行）
     await _loadMessages();
 
-    // 设置WebSocket监听和网络状态监听
+    // 🚀 其他操作并行执行，不阻塞UI
     _setupWebSocketListener();
     _setupNetworkStatusListener();
     
@@ -297,15 +415,15 @@ class _MobileChatPageState extends State<MobileChatPage>
       });
     }
 
-    // 页面加载完成后，标记所有消息为已读
-    if (mounted) {
-      await _markCurrentChatAsRead();
-    }
-
-    // 初始化Agora服务
-    if (_agoraService != null && _currentUserId != null) {
-      await _agoraService.initialize(_currentUserId!);
-    }
+    // 🚀 以下操作在后台并行执行，不阻塞消息显示
+    unawaited(Future.wait([
+      if (widget.isGroup && widget.groupId != null) _loadGroupInfo(),
+      _loadDoNotDisturbStatus(),
+      _loadPinStatus(),
+      if (mounted) _markCurrentChatAsRead(),
+      if (_agoraService != null && _currentUserId != null) 
+        _agoraService.initialize(_currentUserId!),
+    ].whereType<Future>().toList()));
   }
 
   /// 刷新当前用户头像（当用户更新头像后调用）
@@ -337,14 +455,9 @@ class _MobileChatPageState extends State<MobileChatPage>
     });
   }
 
-  // 启动自动滚动定时器
+  // 启动自动滚动定时器（初始化时调用）
   void _setupAutoScrollTimer() {
-    // 启动消息列表自动滚动定时器，每隔1500毫秒检查一次
-    _messageScrollTimer = Timer.periodic(const Duration(milliseconds: 1500), (
-      timer,
-    ) {
-      _checkAndScrollToBottom();
-    });
+    _startAutoScrollTimer();
   }
 
   // 设置滚动监听器
@@ -357,28 +470,146 @@ class _MobileChatPageState extends State<MobileChatPage>
       final maxScroll = _scrollController.position.maxScrollExtent;
       const threshold = 10.0; // 10像素的阈值
 
-      // 如果用户滚动到底部，重新启用自动滚动
+      // 🔴 reverse: false 模式下
+      // pixels = 0 表示在顶部（最旧消息）
+      // pixels = maxScrollExtent 表示在底部（最新消息）
+      
+      // 🔴 检测是否滚动到顶部（pixels接近0），加载更多历史消息
+      if (currentPosition <= 50 && !_isLoadingHistory && _hasMoreHistory) {
+        _loadMoreHistory();
+      }
+
+      // 如果用户滚动到底部（pixels接近maxScroll），重新启用自动滚动
       if (currentPosition >= maxScroll - threshold) {
         if (_isUserScrolling) {
           setState(() {
             _isUserScrolling = false;
           });
+          // 🔴 滚动到底部时重新启动定时器
+          _startAutoScrollTimer();
         }
       } else {
-        // 如果用户向上滚动（当前位置小于上次位置），标记为用户手动滚动
-        if (currentPosition < _lastScrollPosition - threshold) {
-          // 用户向上滚动，暂停自动滚动
-          if (!_isUserScrolling) {
-            setState(() {
-              _isUserScrolling = true;
-            });
-          }
+        // 🔴 只要不在底部，就标记为用户手动滚动，停止自动滚动
+        if (!_isUserScrolling) {
+          setState(() {
+            _isUserScrolling = true;
+          });
+          // 🔴 用户向上滚动时取消定时器
+          _stopAutoScrollTimer();
         }
       }
 
       // 更新上次滚动位置
       _lastScrollPosition = currentPosition;
     });
+  }
+
+  /// 🔴 启动自动滚动定时器
+  void _startAutoScrollTimer() {
+    if (_messageScrollTimer != null && _messageScrollTimer!.isActive) {
+      return; // 定时器已经在运行
+    }
+    _messageScrollTimer = Timer.periodic(const Duration(milliseconds: 1500), (timer) {
+      _checkAndScrollToBottom();
+    });
+    logger.debug('⏱️ [自动滚动] 定时器已启动');
+  }
+
+  /// 🔴 停止自动滚动定时器
+  void _stopAutoScrollTimer() {
+    _messageScrollTimer?.cancel();
+    _messageScrollTimer = null;
+    logger.debug('⏱️ [自动滚动] 定时器已停止');
+  }
+
+  /// 🔴 加载更多历史消息
+  Future<void> _loadMoreHistory() async {
+    if (_isLoadingHistory || !_hasMoreHistory || _token == null) return;
+
+    // 🔴 先停止定时器，防止在加载过程中触发自动滚动
+    _stopAutoScrollTimer();
+
+    setState(() {
+      _isLoadingHistory = true;
+      _isUserScrolling = true; // 🔴 确保加载历史时不会自动滚动到底部
+    });
+
+    try {
+      final messageService = MessageService();
+      List<MessageModel> olderMessages = [];
+
+      // 获取当前最早的消息ID，用于分页
+      final oldestMessageId = _messages.isNotEmpty ? _messages.first.id : null;
+
+      if (widget.isFileAssistant) {
+        // 文件助手暂不支持加载更多
+        setState(() {
+          _hasMoreHistory = false;
+          _isLoadingHistory = false;
+        });
+        return;
+      } else if (widget.isGroup && widget.groupId != null) {
+        // 群聊消息
+        olderMessages = await messageService.getGroupMessageList(
+          groupId: widget.groupId!,
+          pageSize: 20,
+          beforeId: oldestMessageId,
+        );
+      } else {
+        // 私聊消息
+        olderMessages = await messageService.getMessages(
+          contactId: widget.userId,
+          pageSize: 20,
+          beforeId: oldestMessageId,
+        );
+      }
+
+      if (mounted) {
+        if (olderMessages.isEmpty) {
+          setState(() {
+            _hasMoreHistory = false;
+            _isLoadingHistory = false;
+          });
+          logger.debug('📜 [加载历史] 没有更多历史消息了');
+        } else {
+          // 🔴 保存当前滚动位置，用于加载历史消息后恢复
+          final currentScrollOffset = _scrollController.hasClients 
+              ? _scrollController.position.pixels 
+              : 0.0;
+          
+          // 🔴 使用 reverse: false 的 ListView，历史消息插入到列表开头
+          setState(() {
+            _messages.insertAll(0, olderMessages);
+            _currentPage++;
+            _isLoadingHistory = false;
+          });
+          
+          // 🔴 恢复滚动位置，保持用户当前查看的消息不变
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted && _scrollController.hasClients) {
+              // 计算新增消息的高度（估算）
+              final estimatedNewHeight = olderMessages.length * 80.0;
+              _scrollController.jumpTo(currentScrollOffset + estimatedNewHeight);
+            }
+          });
+          
+          // 🔴 更新缓存：将历史消息添加到缓存开头
+          final cacheKey = _getCacheKey();
+          MobileChatPage.prependToCache(cacheKey, olderMessages);
+          logger.debug('📜 [加载历史] 已更新缓存，缓存消息数: ${MobileChatPage._messageCache[cacheKey]?.length ?? 0}');
+
+          logger.debug(
+              '📜 [加载历史] 加载了 ${olderMessages.length} 条历史消息，总消息数: ${_messages.length}');
+        }
+      }
+    } catch (e) {
+      logger.error('❌ [加载历史] 加载历史消息失败: $e');
+      if (mounted) {
+        setState(() {
+          _isLoadingHistory = false;
+        });
+      }
+    }
   }
 
   void _setupWebSocketListener() {
@@ -530,30 +761,18 @@ class _MobileChatPageState extends State<MobileChatPage>
 
   // 🔴 下拉刷新方法
   Future<void> _onRefresh() async {
+    // 🔴 在reverse模式下，下拉刷新实际上是在列表顶部（历史消息方向）触发
+    // 如果还有更多历史消息，调用_loadMoreHistory加载
+    // 如果没有更多历史消息，不执行任何操作，避免重置缓存和滚动到底部
     
-    setState(() {
-      _isConnecting = true;
-    });
-    
-    try {
-      // 尝试重新连接WebSocket
-      await _wsService.connect();
-      
-      // 重新加载消息
-      await _loadMessages();
-      
-    } catch (e) {
-      logger.error('❌ [下拉刷新] 刷新失败', error: e);
+    if (_hasMoreHistory) {
+      // 还有更多历史消息，加载历史消息
+      await _loadMoreHistory();
+    } else {
+      // 🔴 没有更多历史消息了，不执行任何操作
+      // 这样可以避免重置缓存和滚动到底部的问题
+      logger.debug('📜 [下拉刷新] 没有更多历史消息，跳过刷新');
     }
-    
-    // 延迟1秒后隐藏刷新状态
-    Timer(const Duration(seconds: 1), () {
-      if (mounted) {
-        setState(() {
-          _isConnecting = false;
-        });
-      }
-    });
   }
 
   // 🔴 设置网络状态监听
@@ -638,7 +857,7 @@ class _MobileChatPageState extends State<MobileChatPage>
       }
       
       // 2. 重新加载消息数据（此时本地数据库已包含最新的离线消息）
-      await _loadMessages();
+      await _loadMessages(forceRefresh: true);
       
       // 3. 等待UI完全渲染完成后才隐藏"正在刷新..."提示
       
@@ -763,6 +982,8 @@ class _MobileChatPageState extends State<MobileChatPage>
             _lastScrollPosition = 0.0; // 重置滚动位置记录
           });
         }
+        // 🔴 收到新消息时重新启动定时器
+        _startAutoScrollTimer();
 
         // 滚动到底部
         Future.delayed(const Duration(milliseconds: 100), () {
@@ -836,7 +1057,7 @@ class _MobileChatPageState extends State<MobileChatPage>
       
       // 🔴 添加小延迟确保数据库更新完成，然后重新加载消息列表
       await Future.delayed(const Duration(milliseconds: 100));
-      await _loadMessages();
+      await _loadMessages(forceRefresh: true);
 
     } catch (e) {
       logger.error('❌ 处理消息发送确认失败: $e');
@@ -1313,7 +1534,7 @@ class _MobileChatPageState extends State<MobileChatPage>
         _hasLoadedCache = false; // 重置缓存加载状态，强制从数据库重新加载
       });
       
-      await _loadMessages();
+      await _loadMessages(forceRefresh: true);
       
     } catch (e) {
     }
@@ -1336,6 +1557,7 @@ class _MobileChatPageState extends State<MobileChatPage>
     final cachedMessages = MobileChatPage._messageCache[cacheKey];
 
     if (cachedMessages != null && cachedMessages.isNotEmpty) {
+      logger.debug('📦 [缓存加载] 从缓存加载 ${cachedMessages.length} 条消息');
       setState(() {
         _messages.clear();
         // 🔄 将从缓存加载的、自己发送的消息状态从'sent'改为null，这样重新进入后显示双钩
@@ -1355,36 +1577,19 @@ class _MobileChatPageState extends State<MobileChatPage>
     }
   }
 
-  /// 更新缓存
+  /// 更新缓存（保存所有消息，不限制大小）
   void _updateCache(List<MessageModel> messages) {
     final cacheKey = _getCacheKey();
-
-    // 只保存最新的15条消息到缓存
-    final latestMessages = messages.length > MobileChatPage._cacheSize
-        ? messages.sublist(messages.length - MobileChatPage._cacheSize)
-        : messages;
-
-    MobileChatPage._messageCache[cacheKey] = List.from(latestMessages);
+    // 🔴 保存所有消息到缓存（不再限制大小）
+    MobileChatPage._messageCache[cacheKey] = List.from(messages);
+    logger.debug('📦 [缓存更新] 已保存 ${messages.length} 条消息到缓存');
   }
 
-  /// 添加新消息到缓存
+  /// 添加新消息到缓存（不限制大小）
   void _addMessageToCache(MessageModel message) {
     final cacheKey = _getCacheKey();
-
-    // 获取当前缓存
-    List<MessageModel> cachedMessages = MobileChatPage._messageCache[cacheKey] ?? [];
-
-    // 添加新消息
-    cachedMessages.add(message);
-
-    // 保持缓存大小限制
-    if (cachedMessages.length > MobileChatPage._cacheSize) {
-      cachedMessages = cachedMessages.sublist(
-        cachedMessages.length - MobileChatPage._cacheSize,
-      );
-    }
-
-    MobileChatPage._messageCache[cacheKey] = cachedMessages;
+    // 🔴 使用静态方法追加消息
+    MobileChatPage.appendToCache(cacheKey, message);
   }
 
   /// 更新任意会话的消息缓存（用于处理收到的新消息）
@@ -1410,27 +1615,8 @@ class _MobileChatPageState extends State<MobileChatPage>
       cacheKey = 'user_${otherUserId}_$_currentUserId';
     }
 
-    // 获取该会话的缓存
-    List<MessageModel> cachedMessages = MobileChatPage._messageCache[cacheKey] ?? [];
-
-    // 检查消息是否已存在（避免重复）
-    final exists = cachedMessages.any((m) => m.id == message.id);
-    if (exists) {
-      return;
-    }
-
-    // 添加新消息
-    cachedMessages.add(message);
-
-    // 保持缓存大小限制（最新15条）
-    if (cachedMessages.length > MobileChatPage._cacheSize) {
-      cachedMessages = cachedMessages.sublist(
-        cachedMessages.length - MobileChatPage._cacheSize,
-      );
-    }
-
-    // 更新缓存
-    MobileChatPage._messageCache[cacheKey] = cachedMessages;
+    // 🔴 使用静态方法追加消息（不限制缓存大小）
+    MobileChatPage.appendToCache(cacheKey, message);
   }
 
   /// 获取当前会话的唯一标识（用于消息位置缓存）
@@ -1465,7 +1651,7 @@ class _MobileChatPageState extends State<MobileChatPage>
   }
 
   /// 异步加载完整消息数据
-  Future<void> _loadMessages() async {
+  Future<void> _loadMessages({bool forceRefresh = false}) async {
 
     if (_token == null) {
       return;
@@ -1476,15 +1662,98 @@ class _MobileChatPageState extends State<MobileChatPage>
       return;
     }
 
-    // 1. 首先从缓存加载并立即显示（由于上面清除了缓存，这里会跳过）
+    // 1. 首先尝试从缓存加载
     if (!_hasLoadedCache) {
       _loadFromCache();
     }
 
-    // 2. 然后异步加载完整数据
+    // 2. 如果缓存有数据且不是强制刷新，直接使用缓存，关闭加载状态
+    final cacheKey = _getCacheKey();
+    final cachedMessages = MobileChatPage._messageCache[cacheKey];
+    if (!forceRefresh && cachedMessages != null && cachedMessages.isNotEmpty) {
+      logger.debug('📦 [缓存命中] 使用缓存数据，共${cachedMessages.length}条消息');
+
+      // 🔴 重置分页状态
+      _currentPage = 1;
+      _hasMoreHistory = true;
+
+      // 🔴 统计需要网络加载的图片消息
+      final imageMessages = cachedMessages
+          .where((msg) =>
+              msg.messageType == 'image' &&
+              msg.status != 'uploading' &&
+              msg.status != 'failed' &&
+              msg.content.isNotEmpty &&
+              !msg.content.startsWith('/') &&
+              !msg.content.startsWith('C:') &&
+              (msg.content.startsWith('http://') ||
+                  msg.content.startsWith('https://')))
+          .toList();
+
+      logger.debug(
+          '📊 [缓存加载统计] 总消息数: ${cachedMessages.length}, 需要加载的图片数: ${imageMessages.length}');
+
+      // 🔴 缓存命中时，如果没有图片需要加载，直接关闭加载悬浮层（不显示）
+      // 如果有图片需要加载，才显示加载悬浮层等待图片加载
+      final shouldShowLoading = imageMessages.isNotEmpty;
+      
+      // 设置待加载的图片数量
+      setState(() {
+        _pendingMediaCount = imageMessages.length;
+        _loadedMediaCount = 0;
+        _loadedMediaIds.clear();
+        _isLoadingMore = false;
+        // 🔴 缓存命中且无图片需要加载时，直接关闭加载悬浮层
+        if (!shouldShowLoading) {
+          _isInitialLoading = false;
+        }
+      });
+
+      // 🔴 reverse: false 模式下，底部是 maxScrollExtent
+      // 🔴 先滚动到底部，再关闭加载悬浮层
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _scrollController.hasClients) {
+          _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+        }
+      });
+
+      // 🔴 如果有图片需要加载，等待图片加载完成
+      if (imageMessages.isNotEmpty) {
+        logger.debug(
+            '📊 [缓存加载状态] 有${imageMessages.length}张图片需要加载，等待加载完成...');
+        // 🔴 设置超时机制，防止媒体加载时间过长（最多等待5秒）
+        Future.delayed(const Duration(seconds: 5), () {
+          if (mounted && _isInitialLoading) {
+            logger.debug('📊 [缓存加载状态] 超时！强制滚动到底部并关闭加载蒙层');
+            // 🔴 超时时也要先滚动到底部再关闭
+            if (_scrollController.hasClients) {
+              _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+            }
+            Future.delayed(const Duration(milliseconds: 100), () {
+              if (mounted) {
+                setState(() {
+                  _isInitialLoading = false;
+                });
+              }
+            });
+          }
+        });
+      }
+
+      // 标记所有消息为已读
+      _markAllMessagesAsRead();
+      return;
+    }
+
+    logger.debug('📦 [缓存未命中] 从数据库加载消息');
+
+    // 3. 缓存没有数据，从数据库加载
     setState(() {
       _isLoadingMore = true;
       _messagesError = null;
+      // 🔴 重置分页状态
+      _currentPage = 1;
+      _hasMoreHistory = true;
     });
 
     try {
@@ -1530,24 +1799,24 @@ class _MobileChatPageState extends State<MobileChatPage>
           _updateCache(messages);
         }
 
-        // 4. 🔴 更新UI，确保从数据库加载的消息（包含完整字段如voiceDuration）替换临时消息
+        // 4. 更新UI
         if (messages.isNotEmpty) {
           // 🔴 只统计需要网络加载的图片消息（视频和文件只显示图标，不需要等待）
-          final imageMessages = messages.where((msg) => 
-            msg.messageType == 'image' &&
-            msg.status != 'uploading' && 
-            msg.status != 'failed' &&
-            msg.content.isNotEmpty &&
-            !msg.content.startsWith('/') && // 排除本地文件路径
-            !msg.content.startsWith('C:') &&
-            (msg.content.startsWith('http://') || msg.content.startsWith('https://'))
-          ).toList();
-          
-          logger.debug('📊 [加载统计] 总消息数: ${messages.length}, 需要加载的图片数: ${imageMessages.length}');
-          for (var img in imageMessages) {
-            logger.debug('📊 [图片] id=${img.id}, url=${img.content.substring(0, img.content.length > 50 ? 50 : img.content.length)}...');
-          }
-          
+          final imageMessages = messages
+              .where((msg) =>
+                  msg.messageType == 'image' &&
+                  msg.status != 'uploading' &&
+                  msg.status != 'failed' &&
+                  msg.content.isNotEmpty &&
+                  !msg.content.startsWith('/') && // 排除本地文件路径
+                  !msg.content.startsWith('C:') &&
+                  (msg.content.startsWith('http://') ||
+                      msg.content.startsWith('https://')))
+              .toList();
+
+          logger.debug(
+              '📊 [加载统计] 总消息数: ${messages.length}, 需要加载的图片数: ${imageMessages.length}');
+
           setState(() {
             _messages.clear();
             // 🔄 将从数据库加载的、自己发送的消息状态从'sent'改为null，这样重新进入后显示双钩
@@ -1558,51 +1827,74 @@ class _MobileChatPageState extends State<MobileChatPage>
               return msg;
             }).toList();
             _messages.addAll(updatedMessages);
-            
+
             // 🔴 设置待加载的图片数量
             _pendingMediaCount = imageMessages.length;
             _loadedMediaCount = 0;
             _loadedMediaIds.clear();
           });
 
-          logger.debug('📊 [加载状态] _pendingMediaCount=$_pendingMediaCount, _isInitialLoading=$_isInitialLoading');
-
-          // 先跳转到底部
+          // 🔴 reverse: false 模式下，底部是 maxScrollExtent
+          // 🔴 先滚动到底部，再关闭加载悬浮层
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted && _scrollController.hasClients) {
               _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
-            }
-          });
-          
-          // 🔴 如果没有图片需要加载，延迟关闭加载状态
-          if (imageMessages.isEmpty) {
-            logger.debug('📊 [加载状态] 没有图片需要加载，300ms后关闭加载蒙层');
-            Future.delayed(const Duration(milliseconds: 300), () {
-              if (mounted) {
-                setState(() {
-                  _isInitialLoading = false;
+              
+              // 🔴 如果没有图片需要加载，滚动完成后关闭加载状态
+              if (imageMessages.isEmpty) {
+                logger.debug('📊 [加载状态] 没有图片需要加载，滚动到底部后关闭加载蒙层');
+                Future.delayed(const Duration(milliseconds: 100), () {
+                  if (mounted) {
+                    setState(() {
+                      _isInitialLoading = false;
+                    });
+                  }
                 });
               }
-            });
-          } else {
-            logger.debug('📊 [加载状态] 有${imageMessages.length}张图片需要加载，等待加载完成...');
-            // 🔴 设置超时机制，防止媒体加载时间过长（最多等待15秒）
-            Future.delayed(const Duration(seconds: 15), () {
+            } else if (mounted && imageMessages.isEmpty) {
+              // 如果没有滚动控制器，直接关闭加载状态
+              setState(() {
+                _isInitialLoading = false;
+              });
+            }
+          });
+
+          // 🔴 如果有图片需要加载，等待图片加载完成
+          if (imageMessages.isNotEmpty) {
+            logger.debug(
+                '📊 [加载状态] 有${imageMessages.length}张图片需要加载，等待加载完成...');
+            // 🔴 设置超时机制，防止媒体加载时间过长（最多等待5秒）
+            Future.delayed(const Duration(seconds: 5), () {
               if (mounted && _isInitialLoading) {
-                logger.debug('📊 [加载状态] 超时！强制关闭加载蒙层');
-                setState(() {
-                  _isInitialLoading = false;
+                logger.debug('📊 [加载状态] 超时！强制滚动到底部并关闭加载蒙层');
+                // 🔴 超时时也要先滚动到底部再关闭
+                if (_scrollController.hasClients) {
+                  _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+                }
+                Future.delayed(const Duration(milliseconds: 100), () {
+                  if (mounted) {
+                    setState(() {
+                      _isInitialLoading = false;
+                    });
+                  }
                 });
               }
             });
           }
           // 如果有图片需要加载，等待 _onMediaLoadedWithId 回调来关闭加载状态
         } else {
-          // 没有消息，直接关闭加载状态
-          Future.delayed(const Duration(milliseconds: 200), () {
+          // 没有消息，滚动到底部后关闭加载状态
+          WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted) {
-              setState(() {
-                _isInitialLoading = false;
+              if (_scrollController.hasClients) {
+                _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+              }
+              Future.delayed(const Duration(milliseconds: 100), () {
+                if (mounted) {
+                  setState(() {
+                    _isInitialLoading = false;
+                  });
+                }
               });
             }
           });
@@ -1738,6 +2030,11 @@ class _MobileChatPageState extends State<MobileChatPage>
       return;
     }
 
+    // 🔴 如果正在加载历史消息，不执行自动滚动
+    if (_isLoadingHistory) {
+      return;
+    }
+
     // 如果没有消息列表，不执行任何操作
     if (_messages.isEmpty) {
       return;
@@ -1748,13 +2045,13 @@ class _MobileChatPageState extends State<MobileChatPage>
       return;
     }
 
-    // 检查是否已经到达底部（使用10像素的阈值，避免浮点数比较问题）
+    // 🔴 reverse: false 模式下，底部是 maxScrollExtent
     final position = _scrollController.position;
-    final maxScroll = position.maxScrollExtent;
     final currentScroll = position.pixels;
+    final maxScroll = position.maxScrollExtent;
     const threshold = 10.0; // 10像素的阈值
 
-    // 如果已经到达底部（当前滚动位置 >= 最大滚动位置 - 阈值），不执行任何操作
+    // 如果已经到达底部（当前滚动位置 >= maxScroll - 阈值），不执行任何操作
     if (currentScroll >= maxScroll - threshold) {
       return;
     }
@@ -1771,16 +2068,17 @@ class _MobileChatPageState extends State<MobileChatPage>
     if (!mounted || !_scrollController.hasClients) return;
 
     try {
-      if (_scrollController.hasClients &&
-          _scrollController.position.maxScrollExtent > 0) {
+      // 🔴 reverse: false 模式下，底部是 maxScrollExtent
+      if (_scrollController.hasClients) {
+        final maxScroll = _scrollController.position.maxScrollExtent;
         if (animate) {
           _scrollController.animateTo(
-            _scrollController.position.maxScrollExtent,
+            maxScroll,
             duration: const Duration(milliseconds: 300),
             curve: Curves.easeOut,
           );
         } else {
-          _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+          _scrollController.jumpTo(maxScroll);
         }
       }
     } catch (e) {
@@ -1819,18 +2117,24 @@ class _MobileChatPageState extends State<MobileChatPage>
     
     // 当所有图片都加载完成时，关闭初始加载状态
     if (_loadedMediaCount >= _pendingMediaCount && _isInitialLoading) {
-      logger.debug('📊 [图片加载] 所有图片加载完成！关闭加载蒙层');
-      // 延迟一小段时间确保UI渲染完成
-      Future.delayed(const Duration(milliseconds: 200), () {
-        if (mounted) {
+      logger.debug('📊 [图片加载] 所有图片加载完成！准备滚动到底部并关闭加载蒙层');
+      // 🔴 先滚动到底部，再关闭加载悬浮层
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _scrollController.hasClients) {
+          _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+          // 🔴 滚动完成后延迟关闭加载悬浮层
+          Future.delayed(const Duration(milliseconds: 100), () {
+            if (mounted) {
+              setState(() {
+                _isInitialLoading = false;
+              });
+              logger.debug('📊 [图片加载] 滚动到底部完成，加载蒙层已关闭');
+            }
+          });
+        } else if (mounted) {
+          // 如果没有滚动控制器，直接关闭加载状态
           setState(() {
             _isInitialLoading = false;
-          });
-          // 确保滚动到底部
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted && _scrollController.hasClients) {
-              _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
-            }
           });
         }
       });
@@ -3561,7 +3865,7 @@ class _MobileChatPageState extends State<MobileChatPage>
             _messages.add(rejectMessage);
           });
 
-          // 滚动到底部
+          // 🔴 reverse: false 模式下，底部是 maxScrollExtent
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (_scrollController.hasClients) {
               _scrollController.animateTo(
@@ -3631,7 +3935,7 @@ class _MobileChatPageState extends State<MobileChatPage>
             _messages.add(cancelMessage);
           });
 
-          // 滚动到底部
+          // 🔴 reverse: false 模式下，底部是 maxScrollExtent
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (_scrollController.hasClients) {
               _scrollController.animateTo(
@@ -3994,7 +4298,7 @@ class _MobileChatPageState extends State<MobileChatPage>
               ),
               const SizedBox(height: 16),
               ElevatedButton(
-                onPressed: _loadMessages,
+                onPressed: () => _loadMessages(forceRefresh: true),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFF4A90E2),
                 ),
@@ -4042,11 +4346,63 @@ class _MobileChatPageState extends State<MobileChatPage>
               child: ListView.builder(
                 controller: _scrollController,
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                // 🔴 使用reverse: false，保持正常顺序，通过jumpTo跳转到底部
-                itemCount: _messages.length,
+                // 🔴 使用reverse: false，消息从顶部开始排列
+                reverse: false,
+                // 🔴 itemCount 增加1，用于显示顶部加载指示器
+                itemCount: _messages.length + 1,
                 itemBuilder: (context, index) {
-                  final message = _messages[index];
-                    final previousMessage = index > 0 ? _messages[index - 1] : null;
+                  // 🔴 第一个item显示加载更多指示器（显示在视觉顶部）
+                  if (index == 0) {
+                    if (_isLoadingHistory) {
+                      return Container(
+                        padding: const EdgeInsets.all(16),
+                        alignment: Alignment.center,
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor: AlwaysStoppedAnimation<Color>(
+                                  Colors.grey[400]!,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              '加载更多...',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey[500],
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    } else if (!_hasMoreHistory && _messages.isNotEmpty) {
+                      return Container(
+                        padding: const EdgeInsets.all(16),
+                        alignment: Alignment.center,
+                        child: Text(
+                          '没有更多消息了',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey[400],
+                          ),
+                        ),
+                      );
+                    } else {
+                      return const SizedBox.shrink();
+                    }
+                  }
+                  
+                  // 🔴 非reverse模式下，index 1 对应 _messages[0]（最旧的消息）
+                  // _messages[0] 是最旧的消息，_messages[length-1] 是最新的消息
+                  final messageIndex = index - 1;
+                  final message = _messages[messageIndex];
+                  final previousMessage = messageIndex > 0 ? _messages[messageIndex - 1] : null;
 
                     if (_isDuplicateCallEndedMessage(message, previousMessage)) {
                       return const SizedBox.shrink();
@@ -4071,7 +4427,7 @@ class _MobileChatPageState extends State<MobileChatPage>
                   },
                 ),
               ),
-            // 🔴 初始加载时的加载动画覆盖层（不透明，完全遮住消息列表）
+            // 🔴 加载中悬浮层 - 在消息加载完成并滚动到底部前显示
             if (_isInitialLoading)
               Positioned.fill(
                 child: Container(
@@ -4081,12 +4437,12 @@ class _MobileChatPageState extends State<MobileChatPage>
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         SizedBox(
-                          width: 40,
-                          height: 40,
+                          width: 36,
+                          height: 36,
                           child: CircularProgressIndicator(
                             strokeWidth: 3,
                             valueColor: AlwaysStoppedAnimation<Color>(
-                              Theme.of(context).primaryColor,
+                              Colors.blue[400]!,
                             ),
                           ),
                         ),
@@ -4098,16 +4454,6 @@ class _MobileChatPageState extends State<MobileChatPage>
                             color: Colors.grey[600],
                           ),
                         ),
-                        if (_pendingMediaCount > 0) ...[
-                          const SizedBox(height: 8),
-                          Text(
-                            '正在加载媒体 $_loadedMediaCount/$_pendingMediaCount',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Colors.grey[500],
-                            ),
-                          ),
-                        ],
                       ],
                     ),
                   ),
@@ -6311,10 +6657,13 @@ class _MobileChatPageState extends State<MobileChatPage>
       logger.debug('📍 [跳转引用消息] GlobalKey 不可用，使用估算位置滚动');
       
       if (_scrollController.hasClients) {
-        // 估算每条消息的平均高度（包括时间戳、头像、气泡等）
+        // 🔴 reverse: false 模式下，直接使用索引计算位置
+        // _messages[0] 是最旧的消息，在视觉顶部（0）
+        // _messages[length-1] 是最新的消息，在视觉底部（maxScrollExtent）
         final double estimatedItemHeight = 80.0;
-        final double targetOffset = targetIndex * estimatedItemHeight;
         final double maxScroll = _scrollController.position.maxScrollExtent;
+        // 从顶部（最旧消息）往下计算
+        final double targetOffset = targetIndex * estimatedItemHeight;
         final double scrollTo = targetOffset.clamp(0.0, maxScroll);
         
         logger.debug('📍 [跳转引用消息] 滚动到位置: $scrollTo (索引: $targetIndex, 最大: $maxScroll)');

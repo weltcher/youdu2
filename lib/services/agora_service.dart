@@ -49,6 +49,7 @@ class AgoraService {
   // 🔴 新增：保存最后一次通话的群组ID和通话类型（用于通话结束后仍能读取）
   int? _lastGroupId;
   CallType? _lastCallType;
+  int? _lastCallUserId; // 🔴 新增：保存最后一次通话的对方用户ID
 
   // 🔴 新增：通话最小化标志和最小化通话的信息（用于通知UI显示悬浮按钮）
   bool _isCallMinimized = false;
@@ -67,6 +68,10 @@ class AgoraService {
 
   // 🔴 新增：防止重复调用 endCall 的标志位
   bool _isEndingCall = false;
+  
+  // 🔴 新增：标识是否是本地主动挂断（用于决定是否发送通话结束消息）
+  bool _isLocalHangup = false;
+  bool get isLocalHangup => _isLocalHangup;
 
   // 远程用户 ID 集合
   Set<int> _remoteUids = {};
@@ -184,9 +189,10 @@ class AgoraService {
                     !_isGroupCall()) {
                   // logger.debug('📞 单人通话：对方已挂断，准备结束通话');
                   // 🔴 修复：在独立的异步任务中调用 endCall()，避免阻塞回调
+                  // 🔴 对方离开导致的结束，不是本地主动挂断
                   Future.microtask(() async {
                     try {
-                      await endCall();
+                      await endCall(isLocalHangup: false);
                     } catch (e) {
                       // logger.debug('⚠️ 结束通话时出错: $e');
                     }
@@ -355,7 +361,8 @@ class AgoraService {
               // 群组通话中的挂断由 group_call_member_left 消息处理，这里不做任何操作
             } else {
               // logger.debug('📞 单人通话：收到对方挂断信令，准备结束通话');
-              await endCall();
+              // 🔴 收到对方挂断信令，不是本地主动挂断
+              await endCall(isLocalHangup: false);
               // endCall() 内部会触发 onCallEnded 回调
             }
             break;
@@ -420,6 +427,11 @@ class AgoraService {
     // logger.debug('📞 当前用户ID (_myUserId): $_myUserId');
     // logger.debug('📞 通话类型: ${callType == CallType.voice ? '语音' : '视频'}');
 
+    // 🔴 重置本地挂断标识（新通话开始时）
+    _isLocalHangup = false;
+    
+    logger.debug('📞 [_startCall] 开始发起通话，目标用户ID: $targetUserId');
+
     // 检查是否在给自己打电话
     if (targetUserId == _myUserId) {
       logger.debug('📞 不能给自己打电话');
@@ -450,6 +462,7 @@ class AgoraService {
       _currentCallUserId = targetUserId;
       _callType = callType;
       _updateCallState(CallState.calling);
+      logger.debug('📞 [_startCall] 已设置 _currentCallUserId: $_currentCallUserId');
 
       // 🔴 调用服务器API获取频道名称和Token
       // logger.debug('📞 调用服务器API获取频道和Token...');
@@ -570,6 +583,9 @@ class AgoraService {
       onError?.call('Agora 引擎未初始化');
       return;
     }
+
+    // 🔴 重置本地挂断标识（接听来电时）
+    _isLocalHangup = false;
 
     try {
       // logger.debug('📞 接听来电');
@@ -724,12 +740,24 @@ class AgoraService {
       'targetUserId': _currentCallUserId,
     });
 
-    await endCall();
+    await endCall(isLocalHangup: false);
   }
 
   /// 结束通话
-  Future<void> endCall() async {
-    logger.debug('📞 结束通话，当前状态: $_callState');
+  /// [isLocalHangup] 是否是本地主动挂断（用于决定是否发送通话结束消息）
+  Future<void> endCall({bool isLocalHangup = true}) async {
+    logger.debug('📞 结束通话，当前状态: $_callState, 是否本地挂断: $isLocalHangup, _currentCallUserId: $_currentCallUserId');
+    
+    // 🔴 立即保存是否是本地主动挂断的标识（在任何检查之前）
+    // 直接设置为传入的值，确保正确反映当前通话的挂断方
+    _isLocalHangup = isLocalHangup;
+    
+    // 🔴 关键修复：在任何早期返回之前，立即保存最后一次通话的用户ID
+    // 这样即使 endCall 被多次调用，第一次调用时的用户ID也会被保存
+    if (_currentCallUserId != null) {
+      _lastCallUserId = _currentCallUserId;
+      logger.debug('📞 [早期保存] _lastCallUserId: $_lastCallUserId');
+    }
 
     // 关闭原生来电弹窗（无论什么状态都要关闭）
     try {
@@ -743,13 +771,13 @@ class AgoraService {
     // 🔴 优化：使用标志位防止重复调用
     // 即使在异步清理过程中再次调用 endCall，也会立即返回
     if (_isEndingCall) {
-      // logger.debug('📞 正在结束通话中，跳过重复调用');
+      logger.debug('📞 正在结束通话中，跳过重复调用 (但 _lastCallUserId 已保存: $_lastCallUserId)');
       return;
     }
 
     // 防止重复调用
     if (_callState == CallState.idle || _callState == CallState.ended) {
-      // logger.debug('📞 通话已结束，跳过重复调用');
+      logger.debug('📞 通话已结束，跳过重复调用 (但 _lastCallUserId 已保存: $_lastCallUserId)');
       return;
     }
 
@@ -774,7 +802,11 @@ class AgoraService {
     // 这样在 onCallEnded 回调中仍能读取到这些信息
     _lastGroupId = _currentGroupId;
     _lastCallType = _callType;
-    // logger.debug('📞 保存最后通话信息 - 群组ID: $_lastGroupId, 通话类型: $_lastCallType');
+    // 注意：_lastCallUserId 已在方法开头保存，这里只是确保不会被覆盖为 null
+    if (_currentCallUserId != null) {
+      _lastCallUserId = _currentCallUserId;
+    }
+    logger.debug('📞 保存最后通话信息 - 群组ID: $_lastGroupId, 通话类型: $_lastCallType, 用户ID: $_lastCallUserId');
 
     // 🔴 修复：触发通话结束回调，通知UI关闭来电对话框，传递通话时长
     // logger.debug('📞 触发 onCallEnded 回调，通知UI关闭对话框，通话时长: $callDuration 秒');
@@ -901,6 +933,8 @@ class AgoraService {
 
     // 🔴 优化：清除标志位，允许下次调用
     _isEndingCall = false;
+    // 🔴 重置本地挂断标识（在下次通话前）
+    // 注意：不在这里重置，因为 onCallEnded 回调可能还需要读取这个值
   }
 
   /// 处理来电（旧版WebSocket信令）
@@ -1137,7 +1171,8 @@ class AgoraService {
   void _handleCallRejected(Map<String, dynamic> data) {
     // logger.debug('📞 对方拒绝了通话');
     onError?.call('对方拒绝了通话');
-    endCall();
+    // 🔴 对方拒绝，不是本地主动挂断
+    endCall(isLocalHangup: false);
   }
 
   /// 更新通话状态
@@ -1523,6 +1558,7 @@ class AgoraService {
   // 🔴 新增：获取最后一次通话的群组ID和通话类型
   int? get lastGroupId => _lastGroupId;
   CallType? get lastCallType => _lastCallType;
+  int? get lastCallUserId => _lastCallUserId; // 🔴 新增：获取最后一次通话的对方用户ID
 
   // 🔴 新增：获取当前群组通话的成员信息
   List<int>? get currentGroupCallUserIds => _currentGroupCallUserIds;

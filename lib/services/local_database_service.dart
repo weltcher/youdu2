@@ -1487,23 +1487,34 @@ class LocalDatabaseService {
   /// 获取私聊消息列表
   /// [userId1] 和 [userId2] 是两个聊天用户的ID
   /// [limit] 限制返回的消息数量
+  /// [beforeId] 获取此ID之前的消息（用于加载更多历史）
   Future<List<Map<String, dynamic>>> getMessages({
     required int userId1,
     required int userId2,
     int limit = 100,
+    int? beforeId,
   }) async {
     try {
-      // 🔴 修复：先按 id DESC 获取最新的消息，然后反转为正序显示
+      // 🔴 构建查询条件
+      String whereClause = '((sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?)) '
+          'AND status != ? '
+          'AND (deleted_by_users IS NULL OR deleted_by_users NOT LIKE ?)';
+      List<dynamic> whereArgs = [
+        userId1, userId2, userId2, userId1,
+        'recalled',
+        '%$userId1%'
+      ];
+      
+      // 🔴 如果指定了 beforeId，添加条件获取更早的消息
+      if (beforeId != null) {
+        whereClause += ' AND id < ?';
+        whereArgs.add(beforeId);
+      }
+      
       final results = await _executeQuery(
         'messages',
-        where: '((sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?)) '
-            'AND status != ? '
-            'AND (deleted_by_users IS NULL OR deleted_by_users NOT LIKE ?)',
-        whereArgs: [
-          userId1, userId2, userId2, userId1,
-          'recalled',
-          '%$userId1%'
-        ],
+        where: whereClause,
+        whereArgs: whereArgs,
         orderBy: 'id DESC',
         limit: limit,
       );
@@ -1512,7 +1523,7 @@ class LocalDatabaseService {
       final sortedResults = results.reversed.toList();
       
       // 🔴 添加日志：打印所有消息的server_id
-      logger.debug('📊 [getMessages] 从数据库加载 ${sortedResults.length} 条消息');
+      logger.debug('📊 [getMessages] 从数据库加载 ${sortedResults.length} 条消息${beforeId != null ? ' (beforeId: $beforeId)' : ''}');
       for (var i = 0; i < sortedResults.length; i++) {
         final msg = sortedResults[i];
         logger.debug('📊 [getMessages] 消息[$i] - id: ${msg['id']}, server_id: ${msg['server_id']}, quoted_message_id: ${msg['quoted_message_id']}');
@@ -2066,12 +2077,14 @@ class LocalDatabaseService {
   }
 
   /// 获取群聊消息列表
+  /// [beforeId] 获取此ID之前的消息（用于加载更多历史）
   Future<List<Map<String, dynamic>>> getGroupMessages({
     required int groupId,
     int? userId,  // 可选参数，用于过滤当前用户已删除的消息
     int limit = 100,
+    int? beforeId,
   }) async {
-    logger.debug('💾 [LocalDB-查询] getGroupMessages被调用，groupId=$groupId');
+    logger.debug('💾 [LocalDB-查询] getGroupMessages被调用，groupId=$groupId${beforeId != null ? ', beforeId=$beforeId' : ''}');
     
     try {
       String where = 'group_id = ? AND status != ?';
@@ -2081,6 +2094,12 @@ class LocalDatabaseService {
       if (userId != null) {
         where += ' AND (deleted_by_users IS NULL OR deleted_by_users NOT LIKE ?)';
         whereArgs.add('%$userId%');
+      }
+      
+      // 🔴 如果指定了 beforeId，添加条件获取更早的消息
+      if (beforeId != null) {
+        where += ' AND id < ?';
+        whereArgs.add(beforeId);
       }
       
       // 🔴 修复：先按 id DESC 获取最新的消息，然后反转为正序显示

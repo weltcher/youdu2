@@ -180,9 +180,19 @@ func (ctrl *OSSController) InitiateMultipartUpload(c *gin.Context) {
 		return
 	}
 
-	endpointHost := strings.TrimPrefix(ctx.endpoint, "https://")
-	endpointHost = strings.TrimPrefix(endpointHost, "http://")
-	fileURL := fmt.Sprintf("https://%s.%s/%s", ctx.bucketName, endpointHost, objectKey)
+	// 构建文件URL - 优先使用CDN域名
+	cdnDomain := os.Getenv("S3_CDN_DOMAIN")
+	if cdnDomain == "" {
+		cdnDomain = viper.GetString("S3_CDN_DOMAIN")
+	}
+	var fileURL string
+	if cdnDomain != "" {
+		fileURL = fmt.Sprintf("https://%s/%s", cdnDomain, objectKey)
+	} else {
+		endpointHost := strings.TrimPrefix(ctx.endpoint, "https://")
+		endpointHost = strings.TrimPrefix(endpointHost, "http://")
+		fileURL = fmt.Sprintf("https://%s.%s/%s", ctx.bucketName, endpointHost, objectKey)
+	}
 
 	utils.Success(c, gin.H{
 		"upload_id":         imur.UploadID,
@@ -424,10 +434,19 @@ func (ctrl *OSSController) GetOpusUploadURL(c *gin.Context) {
 		return
 	}
 
-	// 生成文件访问URL
-	endpointHost := strings.TrimPrefix(ctx.endpoint, "https://")
-	endpointHost = strings.TrimPrefix(endpointHost, "http://")
-	fileURL := fmt.Sprintf("https://%s.%s/%s", ctx.bucketName, endpointHost, objectKey)
+	// 生成文件访问URL - 优先使用CDN域名
+	cdnDomain := os.Getenv("S3_CDN_DOMAIN")
+	if cdnDomain == "" {
+		cdnDomain = viper.GetString("S3_CDN_DOMAIN")
+	}
+	var fileURL string
+	if cdnDomain != "" {
+		fileURL = fmt.Sprintf("https://%s/%s", cdnDomain, objectKey)
+	} else {
+		endpointHost := strings.TrimPrefix(ctx.endpoint, "https://")
+		endpointHost = strings.TrimPrefix(endpointHost, "http://")
+		fileURL = fmt.Sprintf("https://%s.%s/%s", ctx.bucketName, endpointHost, objectKey)
+	}
 
 	utils.Success(c, gin.H{
 		"uploadUrl":   uploadURL,

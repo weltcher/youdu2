@@ -995,7 +995,11 @@ class _DesktopHomePageState extends State<DesktopHomePage> with WindowListener {
 
           // 🔴 修复：根据是否为群组通话发送不同的消息
           // callDuration > 0 表示通话真正连接过
-          if (callDuration > 0) {
+          // 🔴 只有本地主动挂断时才发送通话结束消息
+          final isLocalHangup = _agoraService.isLocalHangup;
+          logger.debug('🎯 [PC] 是否本地主动挂断: $isLocalHangup');
+          
+          if (callDuration > 0 && isLocalHangup) {
             if (_isInGroupCall && _currentGroupCallId != null) {
               // 群组通话：发送群组消息
               // logger.debug('🎯 检测到群组通话，发送群组消息');
@@ -1014,8 +1018,8 @@ class _DesktopHomePageState extends State<DesktopHomePage> with WindowListener {
             } else {
               // logger.debug('🎯 无有效的目标用户或群组，跳过发送消息');
             }
-          } else {
-            // logger.debug('🎯 通话未连接或被拒绝，不发送通话结束消息（时长: $callDuration 秒）');
+          } else if (callDuration > 0 && !isLocalHangup) {
+            logger.debug('🎯 [PC] 对方挂断，不发送通话结束消息（由对方发送）');
           }
 
           // 重置群组通话标志
