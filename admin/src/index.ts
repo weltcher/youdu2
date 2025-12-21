@@ -14,13 +14,18 @@ const PORT = process.env.PORT || 3001;
 app.use(cors());
 app.use(express.json());
 
-// 路由
+// 路由（同时支持 /api 和 /admin/api）
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/messages', messageRoutes);
 app.use('/api/invite-codes', inviteCodeRoutes);
+app.use('/admin/api/auth', authRoutes);
+app.use('/admin/api/users', userRoutes);
+app.use('/admin/api/messages', messageRoutes);
+app.use('/admin/api/invite-codes', inviteCodeRoutes);
 
 // 静态文件（前端）
+app.use('/admin', express.static('public'));
 app.use(express.static('public'));
 
 // 错误处理

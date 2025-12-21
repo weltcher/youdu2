@@ -1,4 +1,5 @@
-const API_BASE = '/admin/api';
+// 自动判断 API 路径：如果当前路径包含 /admin，则使用 /admin/api，否则使用 /api
+const API_BASE = window.location.pathname.startsWith('/admin') ? '/admin/api' : '/api';
 let token = localStorage.getItem('admin_token');
 let currentPage = 'users';
 
