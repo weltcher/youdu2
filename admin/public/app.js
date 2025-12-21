@@ -1,4 +1,4 @@
-const API_BASE = '/api';
+const API_BASE = '/admin/api';
 let token = localStorage.getItem('admin_token');
 let currentPage = 'users';
 
