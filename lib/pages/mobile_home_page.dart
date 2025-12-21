@@ -16,6 +16,7 @@ import '../services/local_database_service.dart';
 import '../services/notification_service.dart';
 import '../services/native_call_service.dart';
 import '../services/app_initialization_service.dart';
+import '../services/image_preload_service.dart';
 import '../config/feature_config.dart';
 import '../config/api_config.dart';
 import '../utils/storage.dart';
@@ -24,6 +25,7 @@ import '../utils/app_localizations.dart';
 import 'permission_settings_page.dart';
 import '../models/recent_contact_model.dart';
 import '../models/contact_model.dart';
+import '../models/message_model.dart';
 import '../utils/mobile_permission_helper.dart';
 import '../widgets/message_notification_popup.dart';
 import 'mobile_chat_page.dart';
@@ -47,6 +49,10 @@ class MobileHomePage extends StatefulWidget {
   static DateTime? _cacheTimestamp;
   static Map<String, int>? _cachedPinnedChats;
   static Set<String>? _cachedDeletedChats;
+  
+  // 🔴 新增：静态已读状态缓存（即使页面重建也能保留已读状态）
+  // key: "user_123" 或 "group_456"
+  static Set<String> _readStatusCache = {};
 
   @override
   State<MobileHomePage> createState() => _MobileHomePageState();
@@ -57,6 +63,7 @@ class MobileHomePage extends StatefulWidget {
     _cacheTimestamp = null;
     _cachedPinnedChats = null;
     _cachedDeletedChats = null;
+    _readStatusCache.clear(); // 🔴 同时清除已读状态缓存
     logger.info('🗑️ [MobileHomePage] 已清除所有最近联系人和偏好设置缓存');
   }
 
@@ -2190,6 +2197,14 @@ class _MobileHomePageState extends State<MobileHomePage>
     _agoraService.onCallEnded = (int callDuration) {
       logger.debug('📞 [Mobile] 通话结束回调被触发，时长: $callDuration 秒');
 
+      // 🔴 关键修复：立即标记消息将在此回调中发送，防止通话页面返回时重复发送
+      // 因为 Future.delayed 会导致时序问题：通话页面可能在延迟结束前就返回了
+      final isLocalHangup = _agoraService.isLocalHangup;
+      if (callDuration > 0 && isLocalHangup) {
+        _callEndedMessageSent = true;
+        logger.debug('📞 [Mobile] 预先标记 _callEndedMessageSent = true（防止重复发送）');
+      }
+
       // 🔴 修复：不要立即隐藏悬浮按钮，等待通话页面的返回结果
       // 如果是从悬浮按钮恢复的通话，通话页面会处理悬浮按钮的隐藏
       // 只有在非悬浮按钮场景下（如对方挂断），才在这里隐藏
@@ -2293,8 +2308,7 @@ class _MobileHomePageState extends State<MobileHomePage>
                 callDuration,
                 effectiveCallType,
               );
-              // 🔴 标记消息已发送，防止VoiceCallPage返回后重复发送
-              _callEndedMessageSent = true;
+              // 注意：_callEndedMessageSent 已在回调开始时设置，这里不需要重复设置
             } else {
               logger.debug('🎯 [Mobile] 无有效的目标用户或群组，跳过发送消息');
             }
@@ -2536,9 +2550,9 @@ class _MobileHomePageState extends State<MobileHomePage>
                           setState(() {
                             _showCallFloatingButton = false;
                           });
-                          // 🔴 修复：只有本地主动挂断时才发送消息，避免双方都发送
-                          // 检查消息是否已在onCallEnded回调中发送，或者是否是对方挂断
-                          final isLocalHangup = _agoraService.isLocalHangup;
+                          // 🔴 修复：使用返回结果中的 isLocalHangup，而不是从 agoraService 读取
+                          // 因为 agoraService 的状态可能已经被重置
+                          final isLocalHangup = result['isLocalHangup'] as bool? ?? false;
                           if (!_callEndedMessageSent && isLocalHangup) {
                             final callDuration =
                                 result['callDuration'] as int? ?? 0;
@@ -3406,8 +3420,8 @@ class _MobileHomePageState extends State<MobileHomePage>
                     logger.debug('📱 [Mobile] ✅ 悬浮按钮已隐藏');
 
                     if (result['callEnded'] == true) {
-                      // 🔴 修复：只有本地主动挂断时才发送消息，避免双方都发送
-                      final isLocalHangup = _agoraService.isLocalHangup;
+                      // 🔴 修复：使用返回结果中的 isLocalHangup，而不是从 agoraService 读取
+                      final isLocalHangup = result['isLocalHangup'] as bool? ?? false;
                       if (_callEndedMessageSent) {
                         logger.debug('🎯 [Mobile] 通话结束消息已在onCallEnded中发送，跳过重复发送');
                         _callEndedMessageSent = false;
@@ -4105,24 +4119,63 @@ class _MobileChatListPageState extends State<MobileChatListPage> {
           .toList();
 
       if (mounted) {
+        // 🔴 关键修复：保留本地已读状态，避免刷新时重置未读数
+        // 1. 首先从当前内存中的 _recentContacts 获取已读状态
+        final Map<String, int> localUnreadCounts = {};
+        for (final contact in _recentContacts) {
+          final key = contact.isGroup 
+              ? 'group_${contact.groupId ?? contact.userId}' 
+              : 'user_${contact.userId}';
+          // 只记录已读的会话（unreadCount=0）
+          if (contact.unreadCount == 0) {
+            localUnreadCounts[key] = 0;
+          }
+        }
+        
+        // 2. 🔴 关键修复：合并静态已读状态缓存（即使页面重建也能保留）
+        for (final key in MobileHomePage._readStatusCache) {
+          localUnreadCounts[key] = 0;
+        }
+        
+        logger.debug('📊 本地已读会话数: ${localUnreadCounts.length}, keys: ${localUnreadCounts.keys.toList()}');
+        logger.debug('📊 静态已读缓存数: ${MobileHomePage._readStatusCache.length}, keys: ${MobileHomePage._readStatusCache.toList()}');
+        
+        // 合并服务器数据和本地已读状态
+        final mergedContacts = contacts.map((contact) {
+          final key = contact.isGroup 
+              ? 'group_${contact.groupId ?? contact.userId}' 
+              : 'user_${contact.userId}';
+          // 如果本地已标记为已读，保持已读状态
+          if (localUnreadCounts.containsKey(key)) {
+            if (contact.unreadCount > 0) {
+              logger.debug('🔄 保留本地已读状态: $key (数据库未读数: ${contact.unreadCount} -> 0)');
+            }
+            return contact.copyWith(unreadCount: 0, hasMentionedMe: false);
+          }
+          return contact;
+        }).toList();
+        
         setState(() {
-          _recentContacts = contacts;
+          _recentContacts = mergedContacts;
           _isFirstLoad = false; // 🔴 标记已完成首次加载
           _error = null;
         });
 
         // 🔴 更新缓存
-        MobileHomePage._cachedContacts = List.from(contacts);
+        MobileHomePage._cachedContacts = List.from(mergedContacts);
         MobileHomePage._cacheTimestamp = DateTime.now();
-        logger.debug('💾 缓存已更新 (${contacts.length}条，已过滤文件传输助手)');
+        logger.debug('💾 缓存已更新 (${mergedContacts.length}条，已过滤文件传输助手)');
         
         // 🚀 后台预加载所有会话的消息缓存（不阻塞UI）
         final currentUserId = await Storage.getUserId();
-        if (currentUserId != null && contacts.isNotEmpty) {
+        if (currentUserId != null && mergedContacts.isNotEmpty) {
           unawaited(MobileChatPage.preloadMessagesCache(
-            contacts: contacts,
+            contacts: mergedContacts,
             currentUserId: currentUserId,
           ));
+          
+          // 🔴 场景1：首次登录后，预加载所有会话前20条消息的图片
+          unawaited(_preloadAllSessionsImages(mergedContacts, currentUserId));
         }
       }
     } catch (e) {
@@ -4134,6 +4187,46 @@ class _MobileChatListPageState extends State<MobileChatListPage> {
         });
       }
     }
+  }
+
+  /// 🔴 场景1：首次登录后，预加载所有会话前20条消息的图片
+  Future<void> _preloadAllSessionsImages(List<RecentContactModel> contacts, int currentUserId) async {
+    if (!mounted) return;
+    
+    logger.debug('📷 [图片预加载] 开始预加载所有会话的图片...');
+    final imagePreloadService = ImagePreloadService();
+    final messageService = MessageService();
+    
+    for (final contact in contacts) {
+      if (!mounted) break;
+      
+      try {
+        List<MessageModel> messages = [];
+        
+        if (contact.isGroup && contact.groupId != null) {
+          // 群聊消息
+          messages = await messageService.getGroupMessageList(
+            groupId: contact.groupId!,
+            pageSize: 20,
+          );
+        } else if (!contact.isGroup) {
+          // 私聊消息
+          messages = await messageService.getMessages(
+            contactId: contact.userId,
+            pageSize: 20,
+          );
+        }
+        
+        // 预加载图片到内存
+        if (messages.isNotEmpty && mounted) {
+          await imagePreloadService.preloadMessagesImages(context, messages);
+        }
+      } catch (e) {
+        logger.debug('⚠️ [图片预加载] 会话 ${contact.displayName} 预加载失败: $e');
+      }
+    }
+    
+    logger.debug('✅ [图片预加载] 所有会话图片预加载完成');
   }
 
   /// 🔴 更新单个会话的最新消息
@@ -4202,18 +4295,30 @@ class _MobileChatListPageState extends State<MobileChatListPage> {
         if (lastMessage != null && lastMessageTime != null) {
           // 🔴 修复：有最新消息时，只更新会话内容，不移动位置
           // 只有在收到新消息时才会移动会话到顶部（在_handleNewMessage和_handleGroupMessage中处理）
+          // 🔴 关键修复：退出聊天页面时，将未读数设置为0（因为用户已经阅读了消息）
           setState(() {
             final contact = _recentContacts[contactIndex];
             final updatedContact = contact.copyWith(
               lastMessage: lastMessage,
               lastMessageTime: lastMessageTime,
+              unreadCount: 0, // 🔴 关键：退出聊天页面时清除未读数
+              hasMentionedMe: false, // 🔴 同时清除@提醒状态
             );
             
             // 直接在原位置更新，不移动位置
             _recentContacts[contactIndex] = updatedContact;
             
-            logger.debug('✅ 已更新会话内容，保持原位置: "$lastMessage"');
+            logger.debug('✅ 已更新会话内容并清除未读数，保持原位置: "$lastMessage"');
           });
+          
+          // 🔴 关键修复：同时更新数据库中的已读状态
+          if (isGroup) {
+            unawaited(MessageService().markGroupMessagesAsRead(contactId));
+            logger.debug('✅ 已触发群组数据库已读状态更新 - groupId: $contactId');
+          } else {
+            unawaited(MessageService().markMessagesAsRead(contactId));
+            logger.debug('✅ 已触发数据库已读状态更新 - userId: $contactId');
+          }
         } else {
           // 🔴 没有最新消息（清空聊天记录后），保留会话但将最新消息置空
           setState(() {
@@ -4221,13 +4326,24 @@ class _MobileChatListPageState extends State<MobileChatListPage> {
             final updatedContact = contact.copyWith(
               lastMessage: '', // 最新消息置空
               lastMessageTime: DateTime.now().toIso8601String(), // 更新时间为当前时间
+              unreadCount: 0, // 🔴 关键：同样清除未读数
+              hasMentionedMe: false, // 🔴 同时清除@提醒状态
             );
             
             // 直接在原位置更新，不移动位置
             _recentContacts[contactIndex] = updatedContact;
             
-            logger.debug('✅ 已清空会话的最新消息但保留会话在列表中');
+            logger.debug('✅ 已清空会话的最新消息和未读数但保留会话在列表中');
           });
+          
+          // 🔴 关键修复：同时更新数据库中的已读状态（即使没有消息也要更新）
+          if (isGroup) {
+            unawaited(MessageService().markGroupMessagesAsRead(contactId));
+            logger.debug('✅ 已触发群组数据库已读状态更新 - groupId: $contactId');
+          } else {
+            unawaited(MessageService().markMessagesAsRead(contactId));
+            logger.debug('✅ 已触发数据库已读状态更新 - userId: $contactId');
+          }
         }
         
         // 🔴 修复：重新排序会话列表（因为置顶状态可能已改变）
@@ -4348,8 +4464,46 @@ class _MobileChatListPageState extends State<MobileChatListPage> {
 
     // 5. 对非顶置列表按最后消息时间倒序排序（最新消息在最前面）
     unpinnedList.sort((a, b) {
-      final aTime = DateTime.tryParse(a.lastMessageTime ?? '') ?? DateTime(1970);
-      final bTime = DateTime.tryParse(b.lastMessageTime ?? '') ?? DateTime(1970);
+      // 🔴 修复：统一解析时间，处理带 Z 和不带 Z 的时间格式
+      // 带 Z 后缀的是 UTC 时间，需要加 8 小时转换为上海时间
+      // 不带 Z 后缀的已经是本地时间
+      DateTime aTime;
+      DateTime bTime;
+      
+      try {
+        if (a.lastMessageTime != null && a.lastMessageTime!.isNotEmpty) {
+          final aTimeStr = a.lastMessageTime!;
+          if (aTimeStr.endsWith('Z')) {
+            // UTC 时间，转换为上海时间（+8小时）
+            final utcTime = DateTime.parse(aTimeStr);
+            aTime = utcTime.add(const Duration(hours: 8));
+          } else {
+            aTime = DateTime.tryParse(aTimeStr) ?? DateTime(1970);
+          }
+        } else {
+          aTime = DateTime(1970);
+        }
+      } catch (e) {
+        aTime = DateTime(1970);
+      }
+      
+      try {
+        if (b.lastMessageTime != null && b.lastMessageTime!.isNotEmpty) {
+          final bTimeStr = b.lastMessageTime!;
+          if (bTimeStr.endsWith('Z')) {
+            // UTC 时间，转换为上海时间（+8小时）
+            final utcTime = DateTime.parse(bTimeStr);
+            bTime = utcTime.add(const Duration(hours: 8));
+          } else {
+            bTime = DateTime.tryParse(bTimeStr) ?? DateTime(1970);
+          }
+        } else {
+          bTime = DateTime(1970);
+        }
+      } catch (e) {
+        bTime = DateTime(1970);
+      }
+      
       return bTime.compareTo(aTime); // 降序：最新的在前
     });
 
@@ -4358,13 +4512,8 @@ class _MobileChatListPageState extends State<MobileChatListPage> {
     result.addAll(pinnedList.map((e) => e.key));
     result.addAll(unpinnedList);
 
-    // 🔍 调试：打印排序后的前5个会话
-    logger.debug('📊 [移动端排序] 排序后的会话列表（前${result.length > 5 ? 5 : result.length}个）:');
-    for (int i = 0; i < result.length && i < 5; i++) {
-      final contact = result[i];
-      final isPinned = i < pinnedList.length;
-      logger.debug('  ${i + 1}. ${isPinned ? "[置顶]" : ""}${contact.isGroup ? "[群组]" : "[私聊]"} ${contact.displayName} - 最后消息时间: ${contact.lastMessageTime}');
-    }
+    // � 移除频繁的调序试日志，避免性能问题
+    // 如需调试，可在特定位置手动打印
 
     return result;
   }
@@ -4372,6 +4521,8 @@ class _MobileChatListPageState extends State<MobileChatListPage> {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context);
+    // 🔴 性能优化：缓存 _filteredContacts 到局部变量，避免重复计算排序
+    final filteredContacts = _filteredContacts;
 
     return Column(
       children: [
@@ -4440,7 +4591,7 @@ class _MobileChatListPageState extends State<MobileChatListPage> {
                       ],
                     ),
                   )
-                : _filteredContacts.isEmpty
+                : filteredContacts.isEmpty
                 // 🔴 关键修改：只有在首次加载完成后，且列表为空时，才显示空状态页面
                 ? (_isSyncingData
                     // 首次同步数据时显示加载状态
@@ -4498,9 +4649,9 @@ class _MobileChatListPageState extends State<MobileChatListPage> {
                       await _loadRecentContacts();
                     },
                     child: ListView.builder(
-                      itemCount: _filteredContacts.length,
+                      itemCount: filteredContacts.length,
                       itemBuilder: (context, index) {
-                        final contact = _filteredContacts[index];
+                        final contact = filteredContacts[index];
                         return _buildChatItem(contact);
                       },
                     ),
@@ -4595,7 +4746,28 @@ class _MobileChatListPageState extends State<MobileChatListPage> {
                     hasMentionedMe: false,
                   );
                 });
-                logger.debug('✅ 已清除联系人 ${contact.displayName} 的未读计数');
+                // 🔴 关键修复：同步更新缓存，避免刷新时恢复旧的未读数
+                MobileHomePage._cachedContacts = List.from(_recentContacts);
+                MobileHomePage._cacheTimestamp = DateTime.now();
+                
+                // 🔴 关键修复：添加到静态已读状态缓存（即使页面重建也能保留）
+                final readKey = contact.isGroup 
+                    ? 'group_${contact.groupId ?? contact.userId}' 
+                    : 'user_${contact.userId}';
+                MobileHomePage._readStatusCache.add(readKey);
+                logger.debug('✅ 已清除联系人 ${contact.displayName} 的未读计数并更新缓存，readKey: $readKey');
+                
+                // 🔴 关键修复：同时更新数据库中的已读状态
+                // 这样即使会话列表刷新，也不会显示错误的未读数
+                if (contact.type != 'group') {
+                  // 私聊：标记该联系人发送的所有消息为已读
+                  unawaited(MessageService().markMessagesAsRead(contact.userId));
+                  logger.debug('✅ 已触发数据库已读状态更新 - userId: ${contact.userId}');
+                } else {
+                  // 群聊：标记该群组的所有消息为已读
+                  unawaited(MessageService().markGroupMessagesAsRead(contact.userId));
+                  logger.debug('✅ 已触发群组数据库已读状态更新 - groupId: ${contact.userId}');
+                }
               }
             }
 
@@ -5526,6 +5698,31 @@ class _MobileChatListPageState extends State<MobileChatListPage> {
         '📨 消息发送者判断 - 当前用户ID: $currentUserId, 发送者ID: $senderId, 是否是我的消息: $isMyMessage',
       );
 
+      // 🔴 关键修复：将新消息追加到聊天缓存中，确保进入聊天页面时能看到最新消息
+      if (currentUserId != null) {
+        final cacheKey = 'user_${senderId}_$currentUserId';
+        final newMessage = MessageModel(
+          id: messageData['id'] as int? ?? 0,
+          serverId: messageData['id'] as int?,
+          senderId: senderId,
+          receiverId: messageData['receiver_id'] as int? ?? currentUserId,
+          content: content,
+          messageType: messageType,
+          isRead: false,
+          createdAt: createdAt != null ? DateTime.parse(createdAt) : DateTime.now(),
+          senderName: (messageData['sender_name'] as String?) ?? '',
+          receiverName: (messageData['receiver_name'] as String?) ?? '',
+          senderAvatar: messageData['sender_avatar'] as String?,
+          receiverAvatar: messageData['receiver_avatar'] as String?,
+          fileName: messageData['file_name'] as String?,
+          status: 'normal',
+          quotedMessageId: messageData['quoted_message_id'] as int?,
+          quotedMessageContent: messageData['quoted_message_content'] as String?,
+        );
+        MobileChatPage.appendToCache(cacheKey, newMessage);
+        logger.debug('📦 已将新消息追加到缓存: $cacheKey');
+      }
+
       // 🔴 关键修改：如果该联系人在删除列表中，先移除删除标记
       // 参考PC端实现：直接从Storage读取最新状态，而不是依赖内存中的_deletedChats
       final contactKey = Storage.generateContactKey(
@@ -5614,7 +5811,11 @@ class _MobileChatListPageState extends State<MobileChatListPage> {
           // 🔴 更新缓存
           MobileHomePage._cachedContacts = List.from(_recentContacts);
           MobileHomePage._cacheTimestamp = DateTime.now();
-          logger.debug('💾 缓存已更新（私聊消息更新）');
+          
+          // 🔴 关键：收到新消息时，从已读状态缓存中移除该会话
+          final readKey = 'user_$senderId';
+          MobileHomePage._readStatusCache.remove(readKey);
+          logger.debug('💾 缓存已更新（私聊消息更新），已从已读缓存移除: $readKey');
         });
 
         // 播放新消息提示音（有新未读消息且不是自己发送的）
@@ -5732,6 +5933,28 @@ class _MobileChatListPageState extends State<MobileChatListPage> {
         '📨 收到群组消息 - 群组ID: $groupId, 发送者ID: $senderId, 内容: $content, 消息类型: $messageType, 引用消息ID: $quotedMessageId',
       );
 
+      // 🔴 关键修复：将新消息追加到群聊缓存中，确保进入聊天页面时能看到最新消息
+      final cacheKey = 'group_$groupId';
+      final newMessage = MessageModel(
+        id: messageData['id'] as int? ?? 0,
+        serverId: messageData['id'] as int?,
+        senderId: senderId ?? 0,
+        receiverId: 0,
+        content: content,
+        messageType: messageType,
+        isRead: false,
+        createdAt: createdAt != null ? DateTime.parse(createdAt) : DateTime.now(),
+        senderName: (messageData['sender_name'] as String?) ?? '',
+        receiverName: '',
+        senderAvatar: messageData['sender_avatar'] as String?,
+        fileName: messageData['file_name'] as String?,
+        status: 'normal',
+        quotedMessageId: quotedMessageId,
+        quotedMessageContent: quotedMessageContent,
+      );
+      MobileChatPage.appendToCache(cacheKey, newMessage);
+      logger.debug('📦 已将新群组消息追加到缓存: $cacheKey');
+
       // 🔴 检测是否是群组创建/邀请的系统消息
       if (messageType == 'system' && 
           (content.contains('群组已创建') || 
@@ -5842,7 +6065,11 @@ class _MobileChatListPageState extends State<MobileChatListPage> {
           // 🔴 更新缓存
           MobileHomePage._cachedContacts = List.from(_recentContacts);
           MobileHomePage._cacheTimestamp = DateTime.now();
-          logger.debug('💾 缓存已更新（群组消息更新）');
+          
+          // 🔴 关键：收到新群组消息时，从已读状态缓存中移除该群组
+          final readKey = 'group_$groupId';
+          MobileHomePage._readStatusCache.remove(readKey);
+          logger.debug('💾 缓存已更新（群组消息更新），已从已读缓存移除: $readKey');
         });
 
         // 播放新消息提示音（有新未读消息且不是自己发送的）

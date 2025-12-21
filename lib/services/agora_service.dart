@@ -748,10 +748,6 @@ class AgoraService {
   Future<void> endCall({bool isLocalHangup = true}) async {
     logger.debug('📞 结束通话，当前状态: $_callState, 是否本地挂断: $isLocalHangup, _currentCallUserId: $_currentCallUserId');
     
-    // 🔴 立即保存是否是本地主动挂断的标识（在任何检查之前）
-    // 直接设置为传入的值，确保正确反映当前通话的挂断方
-    _isLocalHangup = isLocalHangup;
-    
     // 🔴 关键修复：在任何早期返回之前，立即保存最后一次通话的用户ID
     // 这样即使 endCall 被多次调用，第一次调用时的用户ID也会被保存
     if (_currentCallUserId != null) {
@@ -780,6 +776,11 @@ class AgoraService {
       logger.debug('📞 通话已结束，跳过重复调用 (但 _lastCallUserId 已保存: $_lastCallUserId)');
       return;
     }
+
+    // 🔴 关键修复：只有在第一次有效调用时才设置 isLocalHangup
+    // 这样后续的重复调用不会覆盖这个值
+    _isLocalHangup = isLocalHangup;
+    logger.debug('📞 设置 _isLocalHangup: $_isLocalHangup');
 
     // 设置标志位，防止重复调用
     _isEndingCall = true;

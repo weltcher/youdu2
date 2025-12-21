@@ -462,12 +462,21 @@ class _VoiceCallPageState extends State<VoiceCallPage> {
         }
         logger.debug('📱 最终通话时长: $finalCallDuration 秒');
 
-        // 🔴 修改：立即关闭页面，返回 callEnded 标记和通话时长
+        // 🔴 关键修复：获取是否是本地主动挂断的标识
+        // 如果是对方挂断导致的 ended 状态，isLocalHangup 应该是 false
+        final isLocalHangup = _agoraService.isLocalHangup;
+        logger.debug('📱 是否本地主动挂断: $isLocalHangup');
+
+        // 🔴 修改：立即关闭页面，返回 callEnded 标记、通话时长和是否本地挂断
         logger.debug('📱 准备关闭通话页面');
         if (mounted) {
           Navigator.of(
             context,
-          ).pop({'callEnded': true, 'callDuration': finalCallDuration});
+          ).pop({
+            'callEnded': true, 
+            'callDuration': finalCallDuration,
+            'isLocalHangup': isLocalHangup, // 🔴 新增：传递是否本地挂断
+          });
           logger.debug('📱 通话页面已关闭');
         } else {
           logger.debug('📱 通话页面未 mounted，无法关闭');
@@ -996,8 +1005,8 @@ class _VoiceCallPageState extends State<VoiceCallPage> {
     }
     logger.debug('📱 最终通话时长: $finalCallDuration 秒');
 
-    // 结束通话
-    await _agoraService.endCall();
+    // 结束通话（用户主动挂断，isLocalHangup = true）
+    await _agoraService.endCall(isLocalHangup: true);
 
     // 🔴 修改：立即关闭页面，返回相应的标记和通话类型
     logger.debug('📱 主动挂断，立即关闭页面');
@@ -1014,6 +1023,7 @@ class _VoiceCallPageState extends State<VoiceCallPage> {
           'callEnded': true,
           'callDuration': finalCallDuration,
           'callType': widget.callType, // 返回通话类型
+          'isLocalHangup': true, // 🔴 新增：用户主动挂断
         });
       }
     }

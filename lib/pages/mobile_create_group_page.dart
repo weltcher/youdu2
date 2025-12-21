@@ -343,18 +343,13 @@ class _MobileCreateGroupPageState extends State<MobileCreateGroupPage> {
 
     final search = _searchText.toLowerCase();
     return _groupMembers.where((member) {
-      final displayName =
-          (member['display_name'] as String? ??
-                  member['username'] as String? ??
-                  member['nickname'] as String? ??
-                  '')
-              .toLowerCase();
-      final username = (member['username'] as String? ?? '').toLowerCase();
       final nickname = (member['nickname'] as String? ?? '').toLowerCase();
+      final fullName = (member['full_name'] as String? ?? '').toLowerCase();
+      final username = (member['username'] as String? ?? '').toLowerCase();
 
-      return displayName.contains(search) ||
-          username.contains(search) ||
-          nickname.contains(search);
+      return nickname.contains(search) ||
+          fullName.contains(search) ||
+          username.contains(search);
     }).toList();
   }
 
@@ -1201,8 +1196,15 @@ class _MobileCreateGroupPageState extends State<MobileCreateGroupPage> {
   // 构建群组成员项
   Widget _buildGroupMemberItem(Map<String, dynamic> member) {
     final userId = member['user_id'] as int;
-    final displayName = member['display_name'] as String? ?? member['username'];
+    // 优先显示群昵称，其次是用户昵称，最后是用户名
+    final nickname = member['nickname'] as String?;
+    final fullName = member['full_name'] as String?;
     final username = member['username'] as String?;
+    final displayName = (nickname != null && nickname.isNotEmpty)
+        ? nickname
+        : (fullName != null && fullName.isNotEmpty)
+            ? fullName
+            : (username ?? '');
     final role = member['role'] as String;
     final isMuted = member['is_muted'] as bool? ?? false;
     final avatar = member['avatar'] as String?;
@@ -1299,11 +1301,6 @@ class _MobileCreateGroupPageState extends State<MobileCreateGroupPage> {
                     ],
                   ],
                 ),
-                if (username != null && username.isNotEmpty)
-                  Text(
-                    username,
-                    style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-                  ),
               ],
             ),
           ),

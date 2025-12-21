@@ -102,15 +102,47 @@ class MessageService {
   }
 
   /// 批量标记消息为已读
+  /// 同时更新本地数据库和服务器数据库
   Future<void> markMessagesAsRead(int senderId) async {
     try {
       final receiverId = await Storage.getUserId();
       if (receiverId == null) return;
 
+      // 1. 更新本地数据库
       await _localDb.markMessagesAsRead(senderId, receiverId);
+      logger.debug('✅ 本地数据库已标记消息为已读 - senderId: $senderId');
+
+      // 2. 同步到服务器数据库（异步执行，不阻塞UI）
+      _syncMarkMessagesAsReadToServer(senderId);
     } catch (e) {
       logger.debug('批量标记消息为已读失败: $e');
       rethrow;
+    }
+  }
+
+  /// 同步标记已读状态到服务器（私聊）
+  Future<void> _syncMarkMessagesAsReadToServer(int senderId) async {
+    try {
+      final token = await Storage.getToken();
+      if (token == null || token.isEmpty) {
+        logger.debug('⚠️ Token为空，无法同步已读状态到服务器');
+        return;
+      }
+
+      final response = await ApiService.post(
+        '/api/v1/message/mark-read',
+        {'sender_id': senderId},
+        token: token,
+      );
+
+      if (response['code'] == 0) {
+        logger.debug('✅ 服务器已标记消息为已读 - senderId: $senderId');
+      } else {
+        logger.debug('⚠️ 服务器标记消息已读失败: ${response['message']}');
+      }
+    } catch (e) {
+      logger.debug('⚠️ 同步已读状态到服务器失败: $e');
+      // 不抛出异常，因为本地已经标记成功
     }
   }
 
@@ -806,15 +838,47 @@ class MessageService {
   }
 
   /// 批量标记群组消息为已读
+  /// 同时更新本地数据库和服务器数据库
   Future<void> markGroupMessagesAsRead(int groupId) async {
     try {
       final userId = await Storage.getUserId();
       if (userId == null) return;
 
+      // 1. 更新本地数据库
       await _localDb.markGroupMessagesAsRead(groupId, userId);
+      logger.debug('✅ 本地数据库已标记群组消息为已读 - groupId: $groupId');
+
+      // 2. 同步到服务器数据库（异步执行，不阻塞UI）
+      _syncMarkGroupMessagesAsReadToServer(groupId);
     } catch (e) {
       logger.debug('批量标记群组消息为已读失败: $e');
       rethrow;
+    }
+  }
+
+  /// 同步标记已读状态到服务器（群组）
+  Future<void> _syncMarkGroupMessagesAsReadToServer(int groupId) async {
+    try {
+      final token = await Storage.getToken();
+      if (token == null || token.isEmpty) {
+        logger.debug('⚠️ Token为空，无法同步群组已读状态到服务器');
+        return;
+      }
+
+      final response = await ApiService.post(
+        '/api/v1/message/mark-group-read',
+        {'group_id': groupId},
+        token: token,
+      );
+
+      if (response['code'] == 0) {
+        logger.debug('✅ 服务器已标记群组消息为已读 - groupId: $groupId');
+      } else {
+        logger.debug('⚠️ 服务器标记群组消息已读失败: ${response['message']}');
+      }
+    } catch (e) {
+      logger.debug('⚠️ 同步群组已读状态到服务器失败: $e');
+      // 不抛出异常，因为本地已经标记成功
     }
   }
 

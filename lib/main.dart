@@ -126,6 +126,12 @@ Future<void> _checkAndSaveVersion() async {
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // 🔴 配置图片缓存大小（微信级配置）
+  // Flutter 默认内存缓存很小，不够聊天场景使用
+  PaintingBinding.instance.imageCache
+    ..maximumSize = 1000            // 最多缓存1000张图片
+    ..maximumSizeBytes = 300 << 20; // 最大缓存300MB
+
   // 🔒 配置 HTTPS 证书信任（仅开发环境）
   if (kDebugMode) {
     HttpOverrides.global = MyHttpOverrides();

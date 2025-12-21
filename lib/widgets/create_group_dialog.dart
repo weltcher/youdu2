@@ -1564,7 +1564,15 @@ class _CreateGroupDialogState extends State<CreateGroupDialog> {
       for (var member in sortedMembers) {
         if ((member['approval_status'] as String? ?? 'approved') == 'pending') continue;
         final memberId = member['user_id'] as int;
-        final displayName = member['display_name'] as String? ?? member['username'] as String? ?? '未知';
+        // 优先显示群昵称，其次是用户昵称，最后是用户名
+        final nickname = member['nickname'] as String?;
+        final fullName = member['full_name'] as String?;
+        final username = member['username'] as String?;
+        final displayName = (nickname != null && nickname.isNotEmpty)
+            ? nickname
+            : (fullName != null && fullName.isNotEmpty)
+                ? fullName
+                : (username ?? '未知');
         final avatarUrl = member['avatar'] as String?;
         final role = member['role'] as String? ?? 'member';
 

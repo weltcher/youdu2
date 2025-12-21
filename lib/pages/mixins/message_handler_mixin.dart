@@ -396,17 +396,11 @@ mixin MessageHandlerMixin<T extends StatefulWidget> on State<T> {
     // 实现滚动到指定消息的逻辑
   }
 
-  /// 获取引用消息的预览文本
+  /// 获取引用消息的预览文本（存储原始内容，用于在聊天中显示）
   String getQuotedMessagePreview(MessageModel message) {
-    if (message.messageType == 'image') {
-      return '[图片]';
-    } else if (message.messageType == 'file') {
-      return '[文件] ${message.fileName ?? "未知文件"}';
-    } else if (message.messageType == 'quoted') {
-      return message.content;
-    } else {
-      return message.content;
-    }
+    // 🔴 修改：直接返回原始内容，不再转换为 [图片] 等文字
+    // 这样在聊天对话框中可以显示原始格式（图片、视频等）
+    return message.content;
   }
 
   /// 撤回消息

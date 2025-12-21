@@ -51,7 +51,6 @@ import 'package:http/http.dart' as http;
 import 'package:gal/gal.dart';
 // import 'package:url_launcher/url_launcher.dart'; // TODO: Add url_launcher package when needed
 import 'package:intl/intl.dart';
-import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import '../services/api_service.dart';
 import '../services/websocket_service.dart';
@@ -60,6 +59,7 @@ import 'package:youdu/services/video_upload_service.dart';
 import '../constants/upload_limits.dart';
 import '../services/message_service.dart';
 import '../services/local_database_service.dart';
+import '../services/image_preload_service.dart';
 import '../models/message_model.dart';
 import '../models/group_model.dart';
 import '../models/contact_model.dart';
@@ -183,15 +183,20 @@ class MobileChatPage extends StatefulWidget {
   }
   
   /// 追加新消息到缓存末尾（带去重）
+  /// 🔴 注意：只有当缓存已存在时才追加，如果缓存不存在则不创建
+  /// 这样可以确保进入聊天页面时从数据库加载完整的历史消息
   static void appendToCache(String cacheKey, MessageModel message) {
     if (_messageCache.containsKey(cacheKey)) {
       // 🔴 检查是否已存在（通过id、serverId或内容+时间去重）
       final exists = _messageCache[cacheKey]!.any((m) => _isSameMessage(m, message));
       if (!exists) {
         _messageCache[cacheKey]!.add(message);
+        logger.debug('📦 [缓存追加] 已追加消息到缓存: $cacheKey, 当前缓存消息数: ${_messageCache[cacheKey]!.length}');
       }
     } else {
-      _messageCache[cacheKey] = [message];
+      // 🔴 修复：缓存不存在时，不创建只有一条消息的缓存
+      // 让进入聊天页面时从数据库加载完整的历史消息
+      logger.debug('📦 [缓存追加] 缓存不存在，跳过追加（进入聊天页面时会从数据库加载）: $cacheKey');
     }
   }
   
@@ -620,6 +625,9 @@ class _MobileChatPageState extends State<MobileChatPage>
 
           logger.debug(
               '📜 [加载历史] 加载了 ${olderMessages.length} 条历史消息，总消息数: ${_messages.length}');
+          
+          // 🔴 场景2：下拉加载历史消息后，预加载新加载的图片
+          unawaited(ImagePreloadService().preloadHistoryImages(context, olderMessages));
         }
       }
     } catch (e) {
@@ -943,6 +951,11 @@ class _MobileChatPageState extends State<MobileChatPage>
       // 🔴 无论消息是否属于当前聊天，都更新对应会话的缓存
       _updateMessageCacheForAnyChat(message);
 
+      // 🔴 场景3：收到新图片消息时，立即预加载（不管是否属于当前聊天）
+      if (message.messageType == 'image' && message.senderId != _currentUserId) {
+        unawaited(ImagePreloadService().preloadNewMessageImage(context, message));
+      }
+
       if (isCurrentChat) {
         
         // 如果是自己发送的消息回传，查找并替换临时消息
@@ -1018,13 +1031,28 @@ class _MobileChatPageState extends State<MobileChatPage>
           // 发送批量已读回执
           _wsService.sendReadReceiptForContact(message.senderId);
           
-          // 立即标记该消息为已读
+          // 立即标记该消息为已读（内存）
           _markMessageAsReadLocally(message.id);
+          
+          // 🔴 关键修复：同时更新本地数据库中的已读状态
+          // 这样会话列表刷新时不会显示错误的未读数
+          unawaited(_markMessagesAsReadInDatabase(message.senderId));
         }
       } else {
       }
     } catch (e) {
       logger.error('处理新消息失败', error: e);
+    }
+  }
+
+  /// 🔴 新增：标记数据库中的消息为已读
+  Future<void> _markMessagesAsReadInDatabase(int senderId) async {
+    try {
+      final messageService = MessageService();
+      await messageService.markMessagesAsRead(senderId);
+      logger.debug('✅ 已更新数据库中的已读状态 - senderId: $senderId');
+    } catch (e) {
+      logger.error('❌ 更新数据库已读状态失败: $e');
     }
   }
 
@@ -2206,12 +2234,18 @@ class _MobileChatPageState extends State<MobileChatPage>
           token: _token!,
           groupID: widget.groupId!,
         );
+        // 🔴 关键修复：同时更新本地数据库
+        await MessageService().markGroupMessagesAsRead(widget.groupId!);
+        logger.debug('✅ 已标记群组消息为已读（服务器+本地数据库）- groupId: ${widget.groupId}');
       } else if (!widget.isFileAssistant) {
         // 标记私聊消息为已读
         await ApiService.markMessagesAsRead(
           token: _token!,
           senderID: widget.userId,
         );
+        // 🔴 关键修复：同时更新本地数据库
+        await MessageService().markMessagesAsRead(widget.userId);
+        logger.debug('✅ 已标记私聊消息为已读（服务器+本地数据库）- userId: ${widget.userId}');
       }
 
       // 更新本地消息状态
@@ -5258,6 +5292,8 @@ class _MobileChatPageState extends State<MobileChatPage>
   Widget _buildQuotedMessageWithReply(MessageModel message, bool isMe) {
     // 查找被引用的原始消息
     String quotedSenderName = '';
+    MessageModel? quotedMessage;
+    
     if (message.quotedMessageId != null) {
       // 🔴 使用serverId匹配，因为quoted_message_id是服务器ID
       logger.debug('🔍 [_buildQuotedMessageWithReply] 查找引用消息 - quotedMessageId: ${message.quotedMessageId}');
@@ -5268,7 +5304,7 @@ class _MobileChatPageState extends State<MobileChatPage>
         logger.debug('🔍 [_buildQuotedMessageWithReply] 消息[$i] - id: ${_messages[i].id}, serverId: ${_messages[i].serverId}');
       }
       
-      final quotedMessage = _messages.firstWhere(
+      final foundMessage = _messages.firstWhere(
         (msg) => msg.serverId == message.quotedMessageId || msg.id == message.quotedMessageId,
         orElse: () => MessageModel(
           id: 0,
@@ -5283,8 +5319,9 @@ class _MobileChatPageState extends State<MobileChatPage>
         ),
       );
       
-      if (quotedMessage.id != 0) {
-        logger.debug('✅ [_buildQuotedMessageWithReply] 找到引用消息 - id: ${quotedMessage.id}, content: ${quotedMessage.content}');
+      if (foundMessage.id != 0) {
+        quotedMessage = foundMessage;
+        logger.debug('✅ [_buildQuotedMessageWithReply] 找到引用消息 - id: ${quotedMessage.id}, content: ${quotedMessage.content}, messageType: ${quotedMessage.messageType}');
         // 判断被引用消息的发送者是否是当前用户
         if (quotedMessage.senderId == _currentUserId) {
           quotedSenderName = '我';
@@ -5346,17 +5383,8 @@ class _MobileChatPageState extends State<MobileChatPage>
               ),
             ],
             const SizedBox(height: 4),
-            // 被引用的内容
-            Text(
-              message.quotedMessageContent ?? '',
-              style: const TextStyle(
-                fontSize: 12,
-                color: Color(0xFF666666),
-                fontStyle: FontStyle.italic,
-              ),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-            ),
+            // 被引用的内容 - 支持显示图片（优先使用原始消息）
+            _buildQuotedContentFromMessage(quotedMessage, message.quotedMessageContent),
             const SizedBox(height: 8),
             // 回复内容
             RichText(
@@ -6588,7 +6616,8 @@ class _MobileChatPageState extends State<MobileChatPage>
   void _quoteMessage(MessageModel message) {
     setState(() {
       _quotedMessage = message;
-      _quotedMessageId = message.id;
+      // 🔴 使用服务器ID，确保接收方能找到被引用的消息
+      _quotedMessageId = message.serverId ?? message.id;
     });
     _inputFocusNode.requestFocus();
   }
@@ -6727,21 +6756,380 @@ class _MobileChatPageState extends State<MobileChatPage>
     });
   }
 
-  // 获取引用消息的预览文本
+  // 获取引用消息的预览文本（存储原始内容，用于在聊天中显示）
   String _getQuotedMessagePreview(MessageModel message) {
-    if (message.messageType == 'image') {
-      return '[图片]';
-    } else if (message.messageType == 'file') {
-      return '[文件] ${message.fileName ?? "未知文件"}';
-    } else if (message.messageType == 'video') {
-      return '[视频]';
-    } else if (message.messageType == 'voice') {
-      return '[语音消息]';
-    } else if (message.messageType == 'quoted') {
-      // 如果引用的是引用消息，只返回回复内容，不包含被引用部分
-      return message.content;
-    } else {
-      return message.content;
+    // 🔴 修改：直接返回原始内容，不再转换为 [图片] 等文字
+    // 这样在聊天对话框中可以显示原始格式（图片、视频等）
+    return message.content;
+  }
+
+  // 格式化引用消息内容的显示（将URL转换为[图片][视频][文件]等）
+  String _formatQuotedContentDisplay(String? content) {
+    if (content == null || content.isEmpty) {
+      return '';
+    }
+    // 检查是否是URL
+    if (content.startsWith('http://') || content.startsWith('https://')) {
+      final lowerContent = content.toLowerCase();
+      // 检查是否是图片URL
+      if (lowerContent.contains('.png') || lowerContent.contains('.jpg') || 
+          lowerContent.contains('.jpeg') || lowerContent.contains('.gif') ||
+          lowerContent.contains('.webp') || lowerContent.contains('.bmp')) {
+        return '[图片]';
+      }
+      // 检查是否是视频URL
+      if (lowerContent.contains('.mp4') || lowerContent.contains('.mov') ||
+          lowerContent.contains('.avi') || lowerContent.contains('.mkv') ||
+          lowerContent.contains('.wmv') || lowerContent.contains('.flv')) {
+        return '[视频]';
+      }
+      // 其他URL视为文件
+      return '[文件]';
+    }
+    return content;
+  }
+
+  // 🔴 构建引用内容的Widget（支持显示图片缩略图）
+  Widget _buildQuotedContentWidget(String? content) {
+    if (content == null || content.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    
+    // 检查是否是URL
+    if (content.startsWith('http://') || content.startsWith('https://')) {
+      final lowerContent = content.toLowerCase();
+      
+      // 检查是否是图片URL - 显示图片缩略图
+      if (lowerContent.contains('.png') || lowerContent.contains('.jpg') || 
+          lowerContent.contains('.jpeg') || lowerContent.contains('.gif') ||
+          lowerContent.contains('.webp') || lowerContent.contains('.bmp')) {
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(4),
+          child: Image.network(
+            content,
+            width: 80,
+            height: 80,
+            fit: BoxFit.cover,
+            errorBuilder: (context, error, stackTrace) {
+              return Container(
+                width: 80,
+                height: 80,
+                decoration: BoxDecoration(
+                  color: Colors.grey[200],
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: const Icon(Icons.broken_image, size: 24, color: Colors.grey),
+              );
+            },
+            loadingBuilder: (context, child, loadingProgress) {
+              if (loadingProgress == null) return child;
+              return Container(
+                width: 80,
+                height: 80,
+                decoration: BoxDecoration(
+                  color: Colors.grey[200],
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: const Center(
+                  child: SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                ),
+              );
+            },
+          ),
+        );
+      }
+      
+      // 检查是否是视频URL - 显示视频缩略图（带播放图标）
+      if (lowerContent.contains('.mp4') || lowerContent.contains('.mov') ||
+          lowerContent.contains('.avi') || lowerContent.contains('.mkv') ||
+          lowerContent.contains('.wmv') || lowerContent.contains('.flv')) {
+        return Stack(
+          alignment: Alignment.center,
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: Container(
+                width: 80,
+                height: 80,
+                color: Colors.black54,
+              ),
+            ),
+            Container(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                color: Colors.black45,
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.play_arrow,
+                color: Colors.white,
+                size: 20,
+              ),
+            ),
+          ],
+        );
+      }
+      
+      // 其他URL视为文件
+      return const Text(
+        '[文件]',
+        style: TextStyle(
+          fontSize: 12,
+          color: Color(0xFF666666),
+          fontStyle: FontStyle.italic,
+        ),
+      );
+    }
+    
+    // 普通文本
+    return Text(
+      content,
+      style: const TextStyle(
+        fontSize: 12,
+        color: Color(0xFF666666),
+        fontStyle: FontStyle.italic,
+      ),
+      maxLines: 2,
+      overflow: TextOverflow.ellipsis,
+    );
+  }
+
+  // 🔴 根据原始消息构建引用内容（优先使用原始消息的类型和内容）
+  Widget _buildQuotedContentFromMessage(MessageModel? quotedMessage, String? fallbackContent) {
+    // 如果找到了原始消息，根据消息类型显示
+    if (quotedMessage != null) {
+      switch (quotedMessage.messageType) {
+        case 'image':
+          // 显示图片缩略图
+          return ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: Image.network(
+              quotedMessage.content,
+              width: 80,
+              height: 80,
+              fit: BoxFit.cover,
+              errorBuilder: (context, error, stackTrace) {
+                return Container(
+                  width: 80,
+                  height: 80,
+                  decoration: BoxDecoration(
+                    color: Colors.grey[200],
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: const Icon(Icons.broken_image, size: 24, color: Colors.grey),
+                );
+              },
+              loadingBuilder: (context, child, loadingProgress) {
+                if (loadingProgress == null) return child;
+                return Container(
+                  width: 80,
+                  height: 80,
+                  decoration: BoxDecoration(
+                    color: Colors.grey[200],
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: const Center(
+                    child: SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  ),
+                );
+              },
+            ),
+          );
+        case 'video':
+          // 🔴 显示视频缩略图（带播放图标）
+          return Stack(
+            alignment: Alignment.center,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(4),
+                child: Container(
+                  width: 80,
+                  height: 80,
+                  color: Colors.black87,
+                  child: quotedMessage.content.isNotEmpty
+                      ? Image.network(
+                          // 尝试获取视频第一帧作为缩略图（如果服务器支持）
+                          quotedMessage.content,
+                          width: 80,
+                          height: 80,
+                          fit: BoxFit.cover,
+                          errorBuilder: (context, error, stackTrace) {
+                            return Container(
+                              width: 80,
+                              height: 80,
+                              color: Colors.black54,
+                            );
+                          },
+                        )
+                      : null,
+                ),
+              ),
+              Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: Colors.black45,
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.play_arrow,
+                  color: Colors.white,
+                  size: 20,
+                ),
+              ),
+            ],
+          );
+        case 'file':
+          return Text(
+            '[文件] ${quotedMessage.fileName ?? ""}',
+            style: const TextStyle(
+              fontSize: 12,
+              color: Color(0xFF666666),
+              fontStyle: FontStyle.italic,
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          );
+        case 'voice':
+          return const Text(
+            '[语音消息]',
+            style: TextStyle(
+              fontSize: 12,
+              color: Color(0xFF666666),
+              fontStyle: FontStyle.italic,
+            ),
+          );
+        default:
+          // 文本消息
+          return Text(
+            quotedMessage.content,
+            style: const TextStyle(
+              fontSize: 12,
+              color: Color(0xFF666666),
+              fontStyle: FontStyle.italic,
+            ),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          );
+      }
+    }
+    
+    // 如果没有找到原始消息，使用 fallbackContent
+    return _buildQuotedContentWidget(fallbackContent);
+  }
+
+  // 构建引用预览内容（根据消息类型显示图片/视频/文件/文本）
+  Widget _buildQuotedPreviewContent(MessageModel message) {
+    switch (message.messageType) {
+      case 'image':
+        // 显示图片缩略图
+        return Row(
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: Image.network(
+                message.content,
+                width: 36,
+                height: 36,
+                fit: BoxFit.cover,
+                errorBuilder: (context, error, stackTrace) {
+                  return Container(
+                    width: 36,
+                    height: 36,
+                    color: Colors.grey[300],
+                    child: const Icon(Icons.image, size: 20, color: Colors.grey),
+                  );
+                },
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              '[图片]',
+              style: TextStyle(fontSize: 12, color: Colors.grey[700]),
+            ),
+          ],
+        );
+      case 'video':
+        // 显示视频缩略图
+        return Row(
+          children: [
+            Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: Colors.black87,
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: const Icon(Icons.play_circle_outline, size: 24, color: Colors.white),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              '[视频]',
+              style: TextStyle(fontSize: 12, color: Colors.grey[700]),
+            ),
+          ],
+        );
+      case 'file':
+        // 显示文件图标和文件名
+        return Row(
+          children: [
+            Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: Colors.blue[50],
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: const Icon(Icons.insert_drive_file, size: 22, color: Color(0xFF4A90E2)),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                message.fileName ?? '[文件]',
+                style: TextStyle(fontSize: 12, color: Colors.grey[700]),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        );
+      case 'voice':
+        // 显示语音图标
+        return Row(
+          children: [
+            Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: Colors.green[50],
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: const Icon(Icons.mic, size: 22, color: Colors.green),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              '[语音消息]',
+              style: TextStyle(fontSize: 12, color: Colors.grey[700]),
+            ),
+          ],
+        );
+      default:
+        // 文本消息
+        return Text(
+          message.content,
+          style: TextStyle(fontSize: 12, color: Colors.grey[700]),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        );
     }
   }
 
@@ -7111,15 +7499,9 @@ class _MobileChatPageState extends State<MobileChatPage>
                             fontWeight: FontWeight.w500,
                           ),
                         ),
-                        Text(
-                          _quotedMessage!.content,
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.grey[700],
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
+                        const SizedBox(height: 4),
+                        // 根据消息类型显示不同内容
+                        _buildQuotedPreviewContent(_quotedMessage!),
                       ],
                     ),
                   ),
@@ -8475,6 +8857,11 @@ class _MarqueeTextState extends State<_MarqueeText>
 
 /// 🔴 带加载回调的网络图片组件
 /// 用于追踪图片加载状态，确保所有图片加载完成后才关闭加载蒙层
+/// 
+/// 核心原理：
+/// 1. 优先从 ImagePreloadService 的内存缓存读取图片数据（Uint8List）
+/// 2. 如果缓存命中，使用 Image.memory 直接显示，无需网络请求
+/// 3. 如果缓存未命中，使用 Image.network 从网络加载
 class _NetworkImageWithCallback extends StatefulWidget {
   final String url;
   final int messageId;
@@ -8495,44 +8882,70 @@ class _NetworkImageWithCallback extends StatefulWidget {
 
 class _NetworkImageWithCallbackState extends State<_NetworkImageWithCallback> {
   bool _hasNotified = false; // 防止重复通知
-  bool _isLoading = true; // 是否正在加载
 
   @override
   Widget build(BuildContext context) {
+    // 🔴 优先从内存缓存读取图片数据
+    final imagePreloadService = ImagePreloadService();
+    final cachedData = imagePreloadService.getImageData(widget.url);
+    
+    if (cachedData != null) {
+      // 🔴 缓存命中：使用 Image.memory 直接从内存显示，无需网络请求
+      logger.debug('📷 [图片显示] 缓存命中，从内存加载: ${widget.url}');
+      
+      // 立即通知加载完成
+      if (!_hasNotified) {
+        _hasNotified = true;
+        Future.microtask(() {
+          widget.onLoaded(widget.messageId);
+        });
+      }
+      
+      return Image.memory(
+        cachedData,
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) {
+          logger.debug('❌ [图片显示] 内存图片解码失败: $error');
+          if (!_hasNotified) {
+            _hasNotified = true;
+            Future.microtask(() {
+              widget.onError(widget.messageId);
+            });
+          }
+          return Container(
+            width: 200,
+            height: 150,
+            color: Colors.grey[200],
+            child: const Center(
+              child: Icon(Icons.broken_image, size: 48, color: Colors.grey),
+            ),
+          );
+        },
+      );
+    }
+    
+    // 🔴 缓存未命中：使用 Image.network 从网络加载
+    logger.debug('📷 [图片显示] 缓存未命中，从网络加载: ${widget.url}');
     return Image.network(
       widget.url,
       fit: BoxFit.cover,
-      // 🔴 使用 frameBuilder 来检测图片是否真正渲染完成
+      // 🔴 使用 frameBuilder 检测图片是否渲染完成
       frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
-        // frame != null 表示至少有一帧已经解码完成
-        if (frame != null && !_hasNotified) {
+        // wasSynchronouslyLoaded = true 表示图片从内存缓存同步加载（秒显示）
+        // frame != null 表示至少有一帧已解码完成
+        if ((frame != null || wasSynchronouslyLoaded) && !_hasNotified) {
           _hasNotified = true;
-          _isLoading = false;
-          // 使用 Future.microtask 确保在当前帧结束后通知
-          Future.microtask(() {
-            widget.onLoaded(widget.messageId);
-          });
-        }
-        // 如果是同步加载（从缓存），也需要通知
-        if (wasSynchronouslyLoaded && !_hasNotified) {
-          _hasNotified = true;
-          _isLoading = false;
           Future.microtask(() {
             widget.onLoaded(widget.messageId);
           });
         }
         return child;
       },
+      // 🔴 加载中显示进度（如果图片已在内存中，这个不会显示）
       loadingBuilder: (context, child, loadingProgress) {
-        // 如果已经通知过加载完成，直接返回child
-        if (!_isLoading) {
-          return child;
-        }
         if (loadingProgress == null) {
-          // 数据加载完成，但可能还在解码
-          return child;
+          return child; // 加载完成
         }
-        // 显示加载进度
         return Container(
           width: 200,
           height: 150,
@@ -8547,8 +8960,8 @@ class _NetworkImageWithCallbackState extends State<_NetworkImageWithCallback> {
           ),
         );
       },
+      // 🔴 加载失败显示错误图标
       errorBuilder: (context, error, stackTrace) {
-        // 图片加载失败
         if (!_hasNotified) {
           _hasNotified = true;
           Future.microtask(() {

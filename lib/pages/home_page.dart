@@ -3830,13 +3830,17 @@ class _DesktopHomePageState extends State<DesktopHomePage> with WindowListener {
 
       // 判断消息是否来自当前正在聊天的联系人
       if (_currentChatUserId != null && senderId == _currentChatUserId) {
-        // 🔴 修复：过滤掉对方推送的通话结束消息
-        // 因为本地已经创建了通话结束消息，不需要显示对方推送的
+        // 🔴 修复：只有当本地主动挂断时才过滤对方推送的通话结束消息
+        // 如果是对方主动挂断（本地被动），则应该显示对方推送的消息
         final isCallEndedMessage =
             messageType == 'call_ended' || messageType == 'call_ended_video';
 
-        if (isCallEndedMessage) {
-          // logger.debug('📞 过滤对方推送的通话结束消息: $messageType, 内容: $content');
+        // 检查是否是本地主动挂断（只有本地主动挂断时才过滤，因为本地已创建消息）
+        final isLocalHangup = _agoraService?.isLocalHangup ?? false;
+        
+        if (isCallEndedMessage && isLocalHangup) {
+          // 本地主动挂断，已经创建了消息，过滤对方推送的重复消息
+          logger.debug('📞 本地主动挂断，过滤对方推送的通话结束消息: $messageType');
           // 虽然不显示在消息列表，但仍需要更新最近联系人列表
           setState(() {
             final contactIndex = _recentContacts.indexWhere(
@@ -3870,9 +3874,11 @@ class _DesktopHomePageState extends State<DesktopHomePage> with WindowListener {
 
           // 自动标记为已读（因为用户正在查看这个聊天窗口）
           _markMessagesAsRead(senderId);
-          // logger.debug('✅ 已过滤通话结束消息但仍标记为已读: $content');
 
           return; // 不添加到消息列表
+        } else if (isCallEndedMessage && !isLocalHangup) {
+          // 对方主动挂断，本地没有创建消息，需要显示对方推送的消息
+          logger.debug('📞 对方主动挂断，显示对方推送的通话结束消息: $messageType, 内容: $content');
         }
 
         // 创建消息模型（使用fromJson自动解析所有字段）
@@ -5430,17 +5436,379 @@ class _DesktopHomePageState extends State<DesktopHomePage> with WindowListener {
     }
   }
 
-  // 获取引用消息的预览文
+  // 获取引用消息的预览文本（存储原始内容，用于在聊天中显示）
   String _getQuotedMessagePreview(MessageModel message) {
-    if (message.messageType == 'image') {
-      return '[图片]';
-    } else if (message.messageType == 'file') {
-      return '[文件] ${message.fileName ?? "未知文件"}';
-    } else if (message.messageType == 'quoted') {
-      // 如果引用的是引用消息，只返回回复内容，不包含被引用部
-      return message.content;
-    } else {
-      return message.content;
+    // 🔴 修改：直接返回原始内容，不再转换为 [图片] 等文字
+    // 这样在聊天对话框中可以显示原始格式（图片、视频等）
+    return message.content;
+  }
+
+  // 格式化引用消息内容的显示（将URL转换为[图片][视频][文件]等）
+  String _formatQuotedContentDisplay(String? content) {
+    if (content == null || content.isEmpty) {
+      return '';
+    }
+    // 检查是否是URL
+    if (content.startsWith('http://') || content.startsWith('https://')) {
+      final lowerContent = content.toLowerCase();
+      // 检查是否是图片URL
+      if (lowerContent.contains('.png') || lowerContent.contains('.jpg') || 
+          lowerContent.contains('.jpeg') || lowerContent.contains('.gif') ||
+          lowerContent.contains('.webp') || lowerContent.contains('.bmp')) {
+        return '[图片]';
+      }
+      // 检查是否是视频URL
+      if (lowerContent.contains('.mp4') || lowerContent.contains('.mov') ||
+          lowerContent.contains('.avi') || lowerContent.contains('.mkv') ||
+          lowerContent.contains('.wmv') || lowerContent.contains('.flv')) {
+        return '[视频]';
+      }
+      // 其他URL视为文件
+      return '[文件]';
+    }
+    return content;
+  }
+
+  // 🔴 构建引用内容的Widget（支持显示图片缩略图）
+  Widget _buildQuotedContentWidget(String? content) {
+    if (content == null || content.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    
+    // 检查是否是URL
+    if (content.startsWith('http://') || content.startsWith('https://')) {
+      final lowerContent = content.toLowerCase();
+      
+      // 检查是否是图片URL - 显示图片缩略图
+      if (lowerContent.contains('.png') || lowerContent.contains('.jpg') || 
+          lowerContent.contains('.jpeg') || lowerContent.contains('.gif') ||
+          lowerContent.contains('.webp') || lowerContent.contains('.bmp')) {
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(4),
+          child: Image.network(
+            content,
+            width: 80,
+            height: 80,
+            fit: BoxFit.cover,
+            errorBuilder: (context, error, stackTrace) {
+              return Container(
+                width: 80,
+                height: 80,
+                decoration: BoxDecoration(
+                  color: Colors.grey[200],
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: const Icon(Icons.broken_image, size: 24, color: Colors.grey),
+              );
+            },
+            loadingBuilder: (context, child, loadingProgress) {
+              if (loadingProgress == null) return child;
+              return Container(
+                width: 80,
+                height: 80,
+                decoration: BoxDecoration(
+                  color: Colors.grey[200],
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: const Center(
+                  child: SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                ),
+              );
+            },
+          ),
+        );
+      }
+      
+      // 检查是否是视频URL - 显示视频缩略图（带播放图标）
+      if (lowerContent.contains('.mp4') || lowerContent.contains('.mov') ||
+          lowerContent.contains('.avi') || lowerContent.contains('.mkv') ||
+          lowerContent.contains('.wmv') || lowerContent.contains('.flv')) {
+        return Stack(
+          alignment: Alignment.center,
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: Container(
+                width: 80,
+                height: 80,
+                color: Colors.black54,
+              ),
+            ),
+            Container(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                color: Colors.black45,
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.play_arrow,
+                color: Colors.white,
+                size: 20,
+              ),
+            ),
+          ],
+        );
+      }
+      
+      // 其他URL视为文件
+      return const Text(
+        '[文件]',
+        style: TextStyle(
+          fontSize: 12,
+          color: Color(0xFF666666),
+          fontStyle: FontStyle.italic,
+        ),
+      );
+    }
+    
+    // 普通文本
+    return Text(
+      content,
+      style: const TextStyle(
+        fontSize: 12,
+        color: Color(0xFF666666),
+        fontStyle: FontStyle.italic,
+      ),
+      maxLines: 2,
+      overflow: TextOverflow.ellipsis,
+    );
+  }
+
+  // 🔴 根据原始消息构建引用内容（优先使用原始消息的类型和内容）
+  Widget _buildQuotedContentFromMessage(MessageModel? quotedMessage, String? fallbackContent) {
+    // 如果找到了原始消息，根据消息类型显示
+    if (quotedMessage != null) {
+      switch (quotedMessage.messageType) {
+        case 'image':
+          // 显示图片缩略图
+          return ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: Image.network(
+              quotedMessage.content,
+              width: 80,
+              height: 80,
+              fit: BoxFit.cover,
+              errorBuilder: (context, error, stackTrace) {
+                return Container(
+                  width: 80,
+                  height: 80,
+                  decoration: BoxDecoration(
+                    color: Colors.grey[200],
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: const Icon(Icons.broken_image, size: 24, color: Colors.grey),
+                );
+              },
+              loadingBuilder: (context, child, loadingProgress) {
+                if (loadingProgress == null) return child;
+                return Container(
+                  width: 80,
+                  height: 80,
+                  decoration: BoxDecoration(
+                    color: Colors.grey[200],
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: const Center(
+                    child: SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  ),
+                );
+              },
+            ),
+          );
+        case 'video':
+          // 🔴 显示视频缩略图（带播放图标）
+          return Stack(
+            alignment: Alignment.center,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(4),
+                child: Container(
+                  width: 80,
+                  height: 80,
+                  color: Colors.black87,
+                  child: quotedMessage.content.isNotEmpty
+                      ? Image.network(
+                          quotedMessage.content,
+                          width: 80,
+                          height: 80,
+                          fit: BoxFit.cover,
+                          errorBuilder: (context, error, stackTrace) {
+                            return Container(
+                              width: 80,
+                              height: 80,
+                              color: Colors.black54,
+                            );
+                          },
+                        )
+                      : null,
+                ),
+              ),
+              Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: Colors.black45,
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.play_arrow,
+                  color: Colors.white,
+                  size: 20,
+                ),
+              ),
+            ],
+          );
+        case 'file':
+          return Text(
+            '[文件] ${quotedMessage.fileName ?? ""}',
+            style: const TextStyle(
+              fontSize: 12,
+              color: Color(0xFF666666),
+              fontStyle: FontStyle.italic,
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          );
+        case 'voice':
+          return const Text(
+            '[语音消息]',
+            style: TextStyle(
+              fontSize: 12,
+              color: Color(0xFF666666),
+              fontStyle: FontStyle.italic,
+            ),
+          );
+        default:
+          // 文本消息
+          return Text(
+            quotedMessage.content,
+            style: const TextStyle(
+              fontSize: 12,
+              color: Color(0xFF666666),
+              fontStyle: FontStyle.italic,
+            ),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          );
+      }
+    }
+    
+    // 如果没有找到原始消息，使用 fallbackContent
+    return _buildQuotedContentWidget(fallbackContent);
+  }
+
+  // 构建引用预览内容（根据消息类型显示图片/视频/文件/文本）
+  Widget _buildQuotedPreviewContent(MessageModel message) {
+    switch (message.messageType) {
+      case 'image':
+        // 显示图片缩略图
+        return Row(
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: Image.network(
+                message.content,
+                width: 32,
+                height: 32,
+                fit: BoxFit.cover,
+                errorBuilder: (context, error, stackTrace) {
+                  return Container(
+                    width: 32,
+                    height: 32,
+                    color: Colors.grey[300],
+                    child: const Icon(Icons.image, size: 18, color: Colors.grey),
+                  );
+                },
+              ),
+            ),
+            const SizedBox(width: 8),
+            const Text(
+              '[图片]',
+              style: TextStyle(fontSize: 12, color: Color(0xFF666666)),
+            ),
+          ],
+        );
+      case 'video':
+        // 显示视频缩略图
+        return Row(
+          children: [
+            Container(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                color: Colors.black87,
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: const Icon(Icons.play_circle_outline, size: 20, color: Colors.white),
+            ),
+            const SizedBox(width: 8),
+            const Text(
+              '[视频]',
+              style: TextStyle(fontSize: 12, color: Color(0xFF666666)),
+            ),
+          ],
+        );
+      case 'file':
+        // 显示文件图标和文件名
+        return Row(
+          children: [
+            Container(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                color: Colors.blue[50],
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: const Icon(Icons.insert_drive_file, size: 18, color: Color(0xFF4A90E2)),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                message.fileName ?? '[文件]',
+                style: const TextStyle(fontSize: 12, color: Color(0xFF666666)),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        );
+      case 'voice':
+        // 显示语音图标
+        return Row(
+          children: [
+            Container(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                color: Colors.green[50],
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: const Icon(Icons.mic, size: 18, color: Colors.green),
+            ),
+            const SizedBox(width: 8),
+            const Text(
+              '[语音消息]',
+              style: TextStyle(fontSize: 12, color: Color(0xFF666666)),
+            ),
+          ],
+        );
+      default:
+        // 文本消息
+        return Text(
+          message.content,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontSize: 12, color: Color(0xFF666666)),
+        );
     }
   }
 
@@ -9048,9 +9416,9 @@ class _DesktopHomePageState extends State<DesktopHomePage> with WindowListener {
         // 重新加载联系人列表
         await _loadContacts();
         
-        // 重新加载会话列表，确保头像更新
-        logger.debug('🔄 审核联系人后，刷新会话列表以更新头像');
-        await _loadRecentContacts();
+        // 🔴 不再全局刷新会话列表，避免已读状态被重置
+        // 系统消息"请求添加好友【已通过】"会通过WebSocket推送，自动显示在会话列表中
+        // await _loadRecentContacts();
         
         // 如果获取到了最新头像，直接更新会话列表中的对应项
         if (updatedAvatar != null && mounted) {
@@ -16124,6 +16492,7 @@ class _DesktopHomePageState extends State<DesktopHomePage> with WindowListener {
                               Builder(
                                 builder: (context) {
                                   String? quotedSenderName;
+                                  MessageModel? foundQuotedMessage;
                                   if (message.quotedMessageId != null) {
                                     // 🔴 使用serverId匹配，因为quotedMessageId是服务器ID
                                     final quotedMessage = _messages.firstWhere(
@@ -16142,6 +16511,7 @@ class _DesktopHomePageState extends State<DesktopHomePage> with WindowListener {
                                       ),
                                     );
                                     if (quotedMessage.id != 0) {
+                                      foundQuotedMessage = quotedMessage;
                                       // 判断被引用消息的发送者是否是当前用户
                                       if (quotedMessage.senderId ==
                                           _currentUserId) {
@@ -16220,16 +16590,7 @@ class _DesktopHomePageState extends State<DesktopHomePage> with WindowListener {
                                               ),
                                             ],
                                             const SizedBox(height: 4),
-                                            Text(
-                                              message.quotedMessageContent!,
-                                              maxLines: 2,
-                                              overflow: TextOverflow.ellipsis,
-                                              style: const TextStyle(
-                                                fontSize: 12,
-                                                color: Color(0xFF666666),
-                                                fontStyle: FontStyle.italic,
-                                              ),
-                                            ),
+                                            _buildQuotedContentFromMessage(foundQuotedMessage, message.quotedMessageContent),
                                           ],
                                         ),
                                       ),
@@ -16648,6 +17009,7 @@ class _DesktopHomePageState extends State<DesktopHomePage> with WindowListener {
                                             builder: (context) {
                                               // 查找被引用消息的发送者信息
                                               String? quotedSenderName;
+                                              MessageModel? foundQuotedMessage;
                                               if (message.quotedMessageId !=
                                                   null) {
                                                 final quotedMessage = _messages
@@ -16671,6 +17033,7 @@ class _DesktopHomePageState extends State<DesktopHomePage> with WindowListener {
                                                           ),
                                                     );
                                                 if (quotedMessage.id != 0) {
+                                                  foundQuotedMessage = quotedMessage;
                                                   // 判断被引用消息的发送者是否是当前用户
                                                   if (quotedMessage.senderId ==
                                                       _currentUserId) {
@@ -16757,21 +17120,7 @@ class _DesktopHomePageState extends State<DesktopHomePage> with WindowListener {
                                                       ),
                                                     ],
                                                     const SizedBox(height: 4),
-                                                    Text(
-                                                      message
-                                                          .quotedMessageContent!,
-                                                      maxLines: 2,
-                                                      overflow:
-                                                          TextOverflow.ellipsis,
-                                                      style: const TextStyle(
-                                                        fontSize: 12,
-                                                        color: Color(
-                                                          0xFF666666,
-                                                        ),
-                                                        fontStyle:
-                                                            FontStyle.italic,
-                                                      ),
-                                                    ),
+                                                    _buildQuotedContentFromMessage(foundQuotedMessage, message.quotedMessageContent),
                                                   ],
                                                 ),
                                               );
@@ -18074,18 +18423,9 @@ class _DesktopHomePageState extends State<DesktopHomePage> with WindowListener {
                                           color: Color(0xFF4A90E2),
                                         ),
                                       ),
-                                      const SizedBox(height: 2),
-                                      Text(
-                                        _getQuotedMessagePreview(
-                                          _quotedMessage!,
-                                        ),
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: const TextStyle(
-                                          fontSize: 12,
-                                          color: Color(0xFF666666),
-                                        ),
-                                      ),
+                                      const SizedBox(height: 4),
+                                      // 根据消息类型显示不同内容
+                                      _buildQuotedPreviewContent(_quotedMessage!),
                                     ],
                                   ),
                                 ),

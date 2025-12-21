@@ -76,6 +76,22 @@ class WebSocketService {
       logger.debug('🔌 [WebSocket] kDebugMode: $kDebugMode');
 
       _channel = WebSocketChannel.connect(Uri.parse(wsUrl));
+      
+      // 🔴 修复：等待连接就绪，添加超时处理
+      try {
+        await _channel!.ready.timeout(
+          const Duration(seconds: 10),
+          onTimeout: () {
+            throw TimeoutException('WebSocket连接超时');
+          },
+        );
+      } catch (e) {
+        logger.error('❌ [WebSocket] 连接失败: $e');
+        _channel?.sink.close();
+        _channel = null;
+        _scheduleReconnect();
+        return false;
+      }
 
       // 监听消息
       _channel!.stream.listen(
@@ -95,6 +111,9 @@ class WebSocketService {
       
       return true;
     } catch (e) {
+      logger.error('❌ [WebSocket] connect异常: $e');
+      _channel?.sink.close();
+      _channel = null;
       _scheduleReconnect();
       return false;
     }
@@ -965,12 +984,18 @@ class WebSocketService {
           _isConnected = false;
           _channel = null;
           
-          final reconnected = await connect();
-          
-          if (!reconnected) {
-            logger.error('❌ [心跳] 重连失败，断开连接并标记为离线');
-            disconnect(sendOfflineStatus: true);
-          } else {
+          // 🔴 修复：使用 try-catch 包裹重连逻辑，防止连接超时异常未被捕获
+          try {
+            final reconnected = await connect();
+            
+            if (!reconnected) {
+              logger.error('❌ [心跳] 重连失败，断开连接并标记为离线');
+              await disconnect(sendOfflineStatus: true);
+            }
+          } catch (e) {
+            logger.error('❌ [心跳] 重连时发生异常: $e');
+            // 重连异常时也需要断开连接
+            await disconnect(sendOfflineStatus: true);
           }
           
           return;
