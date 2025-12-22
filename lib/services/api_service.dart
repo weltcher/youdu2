@@ -371,7 +371,6 @@ class ApiService {
   /// - token: 登录凭证 (必填)
   /// - fullName: 姓名 (可选)
   /// - gender: 性别 (可选, male/female/other)
-  /// - phone: 手机 (可选)
   /// - landline: 座机 (可选)
   /// - shortNumber: 短号 (可选)
   /// - email: 邮箱 (可选)
@@ -387,7 +386,6 @@ class ApiService {
     required String token,
     String? fullName,
     String? gender,
-    String? phone,
     String? landline,
     String? shortNumber,
     String? department,
@@ -399,7 +397,6 @@ class ApiService {
 
     if (fullName != null) data['full_name'] = fullName;
     if (gender != null) data['gender'] = gender;
-    if (phone != null) data['phone'] = phone;
     if (landline != null) data['landline'] = landline;
     if (shortNumber != null) data['short_number'] = shortNumber;
     if (department != null) data['department'] = department;

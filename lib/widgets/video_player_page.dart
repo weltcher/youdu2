@@ -1,12 +1,18 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:gal/gal.dart';
+import 'package:http/http.dart' as http;
+import '../utils/logger.dart';
 
 class VideoPlayerPage extends StatefulWidget {
   final String videoUrl;
   final String? title;
+  final VoidCallback? onLongPress;
 
-  const VideoPlayerPage({Key? key, required this.videoUrl, this.title})
+  const VideoPlayerPage({Key? key, required this.videoUrl, this.title, this.onLongPress})
     : super(key: key);
 
   @override
@@ -133,6 +139,107 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
     }
   }
 
+  // 显示保存菜单
+  void _showSaveMenu() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+        ),
+        child: SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // 拖动指示器
+              Container(
+                margin: const EdgeInsets.only(top: 12),
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey[300],
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              // 保存到本地选项
+              ListTile(
+                leading: const Icon(Icons.save_alt, color: Color(0xFF4A90E2)),
+                title: const Text('保存到本地'),
+                onTap: () async {
+                  Navigator.pop(context);
+                  await _saveVideoToGallery();
+                },
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // 保存视频到相册
+  Future<void> _saveVideoToGallery() async {
+    try {
+      // 显示加载提示
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('正在保存...'),
+          duration: Duration(seconds: 1),
+        ),
+      );
+
+      // 下载文件
+      final response = await http.get(Uri.parse(widget.videoUrl));
+      if (response.statusCode != 200) {
+        throw Exception('下载失败');
+      }
+
+      // 获取文件扩展名
+      String extension;
+      final fileName = widget.videoUrl.split('/').last.split('?').first;
+      if (fileName.contains('.')) {
+        extension = fileName.split('.').last.toLowerCase();
+      } else {
+        extension = 'mp4';
+      }
+
+      // 保存到临时文件
+      final tempDir = await getTemporaryDirectory();
+      final tempFile = File('${tempDir.path}/temp_${DateTime.now().millisecondsSinceEpoch}.$extension');
+      await tempFile.writeAsBytes(response.bodyBytes);
+
+      // 使用 Gal 保存到相册
+      await Gal.putVideo(tempFile.path);
+
+      // 删除临时文件
+      await tempFile.delete();
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('视频已保存到相册'),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      logger.error('保存视频失败', error: e);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('保存失败: ${e.toString()}'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    }
+  }
+
   // 构建错误提示界面
   Widget _buildErrorWidget() {
     return Container(
@@ -236,6 +343,14 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
                 setState(() {
                   _showControls = !_showControls;
                 });
+              }
+            },
+            onLongPress: () {
+              if (widget.onLongPress != null) {
+                widget.onLongPress!();
+              } else {
+                // 默认显示保存菜单
+                _showSaveMenu();
               }
             },
             child: Center(

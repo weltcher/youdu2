@@ -28,7 +28,6 @@ type ContactInfo struct {
 	Avatar          string    `json:"avatar"`
 	WorkSignature   *string   `json:"work_signature"`
 	Status          string    `json:"status"`
-	Phone           *string   `json:"phone"`
 	Email           *string   `json:"email"`
 	Department      *string   `json:"department"`
 	Position        *string   `json:"position"`
@@ -158,7 +157,6 @@ func (r *ContactRepository) GetContactsByUserID(userID int) ([]ContactInfo, erro
 			u.avatar,
 			u.work_signature,
 			u.status,
-			u.phone,
 			u.email,
 			u.department,
 			u.position,
@@ -225,7 +223,6 @@ func (r *ContactRepository) GetContactsByUserID(userID int) ([]ContactInfo, erro
 			&contact.Avatar,
 			&contact.WorkSignature,
 			&contact.Status,
-			&contact.Phone,
 			&contact.Email,
 			&contact.Department,
 			&contact.Position,
@@ -263,7 +260,6 @@ func (r *ContactRepository) GetPendingContactRequests(userID int) ([]ContactInfo
 			u.avatar,
 			u.work_signature,
 			u.status,
-			u.phone,
 			u.email,
 			u.department,
 			u.position,
@@ -298,7 +294,6 @@ func (r *ContactRepository) GetPendingContactRequests(userID int) ([]ContactInfo
 			&request.Avatar,
 			&request.WorkSignature,
 			&request.Status,
-			&request.Phone,
 			&request.Email,
 			&request.Department,
 			&request.Position,

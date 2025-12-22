@@ -49,6 +49,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:collection/collection.dart';
 import 'package:http/http.dart' as http;
 import 'package:gal/gal.dart';
+import 'package:native_exif/native_exif.dart'; // 修改图片EXIF信息
 // import 'package:url_launcher/url_launcher.dart'; // TODO: Add url_launcher package when needed
 import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
@@ -1758,10 +1759,10 @@ class _MobileChatPageState extends State<MobileChatPage>
       });
 
       // 🔴 reverse: false 模式下，底部是 maxScrollExtent
-      // 🔴 先滚动到底部，再关闭加载悬浮层
+      // 🔴 使用彻底滚动方法，确保滚动到位
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted && _scrollController.hasClients) {
-          _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+        if (mounted) {
+          _scrollToBottomCompletely();
         }
       });
 
@@ -1774,10 +1775,8 @@ class _MobileChatPageState extends State<MobileChatPage>
           if (mounted && _isInitialLoading) {
             logger.debug('📊 [缓存加载状态] 超时！强制滚动到底部并关闭加载蒙层');
             // 🔴 超时时也要先滚动到底部再关闭
-            if (_scrollController.hasClients) {
-              _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
-            }
-            Future.delayed(const Duration(milliseconds: 100), () {
+            _scrollToBottomCompletely();
+            Future.delayed(const Duration(milliseconds: 350), () {
               if (mounted) {
                 setState(() {
                   _isInitialLoading = false;
@@ -1883,15 +1882,15 @@ class _MobileChatPageState extends State<MobileChatPage>
           });
 
           // 🔴 reverse: false 模式下，底部是 maxScrollExtent
-          // 🔴 先滚动到底部，再关闭加载悬浮层
+          // 🔴 使用彻底滚动方法，确保滚动到位
           WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted && _scrollController.hasClients) {
-              _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+            if (mounted) {
+              _scrollToBottomCompletely();
               
               // 🔴 如果没有图片需要加载，滚动完成后关闭加载状态
               if (imageMessages.isEmpty) {
                 logger.debug('📊 [加载状态] 没有图片需要加载，滚动到底部后关闭加载蒙层');
-                Future.delayed(const Duration(milliseconds: 100), () {
+                Future.delayed(const Duration(milliseconds: 350), () {
                   if (mounted) {
                     setState(() {
                       _isInitialLoading = false;
@@ -1916,10 +1915,8 @@ class _MobileChatPageState extends State<MobileChatPage>
               if (mounted && _isInitialLoading) {
                 logger.debug('📊 [加载状态] 超时！强制滚动到底部并关闭加载蒙层');
                 // 🔴 超时时也要先滚动到底部再关闭
-                if (_scrollController.hasClients) {
-                  _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
-                }
-                Future.delayed(const Duration(milliseconds: 100), () {
+                _scrollToBottomCompletely();
+                Future.delayed(const Duration(milliseconds: 350), () {
                   if (mounted) {
                     setState(() {
                       _isInitialLoading = false;
@@ -1934,10 +1931,8 @@ class _MobileChatPageState extends State<MobileChatPage>
           // 没有消息，滚动到底部后关闭加载状态
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted) {
-              if (_scrollController.hasClients) {
-                _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
-              }
-              Future.delayed(const Duration(milliseconds: 100), () {
+              _scrollToBottomCompletely();
+              Future.delayed(const Duration(milliseconds: 350), () {
                 if (mounted) {
                   setState(() {
                     _isInitialLoading = false;
@@ -2134,6 +2129,40 @@ class _MobileChatPageState extends State<MobileChatPage>
     }
   }
 
+  /// 🔴 彻底滚动到底部（多次尝试，确保滚动到位）
+  void _scrollToBottomCompletely() {
+    if (!mounted) return;
+
+    // 第一次立即滚动
+    _performScrollToBottom();
+
+    // 第二次延迟50ms滚动（等待布局更新）
+    Future.delayed(const Duration(milliseconds: 50), () {
+      if (mounted) _performScrollToBottom();
+    });
+
+    // 第三次延迟150ms滚动（等待图片等媒体开始加载）
+    Future.delayed(const Duration(milliseconds: 150), () {
+      if (mounted) _performScrollToBottom();
+    });
+
+    // 第四次延迟300ms滚动（最终确认）
+    Future.delayed(const Duration(milliseconds: 300), () {
+      if (mounted) _performScrollToBottom();
+    });
+  }
+
+  /// 执行滚动到底部
+  void _performScrollToBottom() {
+    if (!mounted || !_scrollController.hasClients) return;
+    try {
+      final maxScroll = _scrollController.position.maxScrollExtent;
+      _scrollController.jumpTo(maxScroll);
+    } catch (e) {
+      // 忽略滚动错误
+    }
+  }
+
   /// 🔴 媒体加载完成回调（图片加载完成时调用）
   void _onMediaLoadedWithId(int messageId) {
     logger.debug('📊 [图片加载] _onMediaLoadedWithId 被调用, messageId=$messageId, _isInitialLoading=$_isInitialLoading');
@@ -2168,23 +2197,16 @@ class _MobileChatPageState extends State<MobileChatPage>
       logger.debug('📊 [图片加载] 所有图片加载完成！准备滚动到底部并关闭加载蒙层');
       // 🔴 先滚动到底部，再关闭加载悬浮层
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted && _scrollController.hasClients) {
-          _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
-          // 🔴 滚动完成后延迟关闭加载悬浮层
-          Future.delayed(const Duration(milliseconds: 100), () {
-            if (mounted) {
-              setState(() {
-                _isInitialLoading = false;
-              });
-              logger.debug('📊 [图片加载] 滚动到底部完成，加载蒙层已关闭');
-            }
-          });
-        } else if (mounted) {
-          // 如果没有滚动控制器，直接关闭加载状态
-          setState(() {
-            _isInitialLoading = false;
-          });
-        }
+        _scrollToBottomCompletely();
+        // 🔴 滚动完成后延迟关闭加载悬浮层
+        Future.delayed(const Duration(milliseconds: 350), () {
+          if (mounted) {
+            setState(() {
+              _isInitialLoading = false;
+            });
+            logger.debug('📊 [图片加载] 滚动到底部完成，加载蒙层已关闭');
+          }
+        });
       });
     }
   }
@@ -6424,8 +6446,27 @@ class _MobileChatPageState extends State<MobileChatPage>
           }
         }
         
-        final tempFile = File('${tempDir.path}/youdu_${DateTime.now().millisecondsSinceEpoch}.$extension');
+        // 使用当前时间作为文件名时间戳，确保保存到相册后显示为最新
+        final now = DateTime.now();
+        final tempFile = File('${tempDir.path}/youdu_${now.millisecondsSinceEpoch}.$extension');
         await tempFile.writeAsBytes(response.bodyBytes);
+        
+        // 🔴 修改图片EXIF时间为当前时间，确保iOS相册按保存时间排序
+        if (message.messageType == 'image' && ['jpg', 'jpeg'].contains(extension)) {
+          try {
+            final exif = await Exif.fromPath(tempFile.path);
+            // 设置EXIF时间为当前时间（格式：yyyy:MM:dd HH:mm:ss）
+            final exifDateFormat = DateFormat('yyyy:MM:dd HH:mm:ss');
+            final exifDateStr = exifDateFormat.format(now);
+            await exif.writeAttribute('DateTimeOriginal', exifDateStr);
+            await exif.writeAttribute('DateTimeDigitized', exifDateStr);
+            await exif.writeAttribute('DateTime', exifDateStr);
+            await exif.close();
+            logger.debug('已修改图片EXIF时间为: $exifDateStr');
+          } catch (exifError) {
+            logger.debug('修改EXIF时间失败（不影响保存）: $exifError');
+          }
+        }
         
         logger.debug('准备保存${message.messageType == 'image' ? '图片' : '视频'}到相册: ${tempFile.path}');
         
@@ -7295,6 +7336,126 @@ class _MobileChatPageState extends State<MobileChatPage>
     }
   }
 
+  // 显示媒体保存菜单（图片/视频预览时长按）
+  void _showMediaSaveMenu(BuildContext context, String mediaUrl, String mediaType) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+        ),
+        child: SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // 拖动指示器
+              Container(
+                margin: const EdgeInsets.only(top: 12),
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey[300],
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              // 保存到本地选项
+              ListTile(
+                leading: const Icon(Icons.save_alt, color: Color(0xFF4A90E2)),
+                title: const Text('保存到本地'),
+                onTap: () async {
+                  Navigator.pop(context);
+                  await _saveMediaToGallery(mediaUrl, mediaType);
+                },
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // 保存媒体文件到相册
+  Future<void> _saveMediaToGallery(String mediaUrl, String mediaType) async {
+    try {
+      // 显示加载提示
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('正在保存...'),
+          duration: Duration(seconds: 1),
+        ),
+      );
+
+      // 下载文件
+      final response = await http.get(Uri.parse(mediaUrl));
+      if (response.statusCode != 200) {
+        throw Exception('下载失败');
+      }
+
+      // 获取文件扩展名
+      String extension;
+      final fileName = mediaUrl.split('/').last.split('?').first;
+      if (fileName.contains('.')) {
+        extension = fileName.split('.').last.toLowerCase();
+      } else {
+        extension = mediaType == 'image' ? 'jpg' : 'mp4';
+      }
+
+      // 保存到临时文件
+      final tempDir = await getTemporaryDirectory();
+      final tempFile = File('${tempDir.path}/temp_${DateTime.now().millisecondsSinceEpoch}.$extension');
+      await tempFile.writeAsBytes(response.bodyBytes);
+
+      // 修改图片EXIF时间为当前时间，确保iOS相册按保存时间排序
+      if (mediaType == 'image' && ['jpg', 'jpeg'].contains(extension)) {
+        try {
+          final exif = await Exif.fromPath(tempFile.path);
+          final now = DateTime.now();
+          await exif.writeAttributes({
+            'DateTimeOriginal': '${now.year}:${now.month.toString().padLeft(2, '0')}:${now.day.toString().padLeft(2, '0')} ${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}:${now.second.toString().padLeft(2, '0')}',
+            'DateTimeDigitized': '${now.year}:${now.month.toString().padLeft(2, '0')}:${now.day.toString().padLeft(2, '0')} ${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}:${now.second.toString().padLeft(2, '0')}',
+          });
+          await exif.close();
+        } catch (e) {
+          logger.debug('修改EXIF时间失败: $e');
+        }
+      }
+
+      // 使用 Gal 保存到相册
+      if (mediaType == 'image') {
+        await Gal.putImage(tempFile.path);
+      } else {
+        await Gal.putVideo(tempFile.path);
+      }
+
+      // 删除临时文件
+      await tempFile.delete();
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(mediaType == 'image' ? '图片已保存到相册' : '视频已保存到相册'),
+            backgroundColor: Colors.green,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      logger.error('保存媒体文件失败', error: e);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('保存失败: ${e.toString()}'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    }
+  }
+
   // 查看图片
   void _viewImage(String imageUrl) {
     Navigator.push(
@@ -7307,6 +7468,7 @@ class _MobileChatPageState extends State<MobileChatPage>
               // 图片查看器
               GestureDetector(
                 onTap: () => Navigator.pop(context),
+                onLongPress: () => _showMediaSaveMenu(context, imageUrl, 'image'),
                 child: Center(
                   child: InteractiveViewer(
                     child: Image.network(

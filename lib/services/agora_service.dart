@@ -743,6 +743,104 @@ class AgoraService {
     await endCall(isLocalHangup: false);
   }
 
+  /// 🔴 新增：群组通话中单个成员离开（只离开频道，不结束整个通话）
+  /// 用于群组通话中点击"挂断"或"拒绝"时，只关闭自己的通话弹窗
+  /// 返回通话时长（秒）
+  Future<int> leaveGroupCallOnly() async {
+    logger.debug('📞 [leaveGroupCallOnly] 群组通话成员离开，当前状态: $_callState');
+
+    // 计算通话时长
+    int callDuration = 0;
+    if (_callStartTime != null) {
+      final elapsed = DateTime.now().difference(_callStartTime!);
+      callDuration = elapsed.inSeconds;
+      logger.debug('📞 [leaveGroupCallOnly] 通话时长: $callDuration 秒');
+    }
+
+    // 关闭原生来电弹窗
+    try {
+      final nativeCallService = NativeCallService();
+      await nativeCallService.dismissCallOverlay();
+      logger.debug('📱 [leaveGroupCallOnly] 原生来电弹窗已关闭');
+    } catch (e) {
+      logger.debug('⚠️ [leaveGroupCallOnly] 关闭原生来电弹窗失败: $e');
+    }
+
+    // 调用服务器API通知其他成员自己离开了
+    if (_currentChannelName != null) {
+      try {
+        final userToken = await Storage.getToken();
+        if (userToken != null) {
+          await ApiService.leaveGroupCall(
+            token: userToken,
+            channelName: _currentChannelName!,
+            groupId: _currentGroupId,
+            callType: _callType == CallType.video ? 'video' : 'voice',
+          );
+          logger.debug('✅ [leaveGroupCallOnly] 群组通话离开消息发送成功');
+        }
+      } catch (e) {
+        logger.debug('⚠️ [leaveGroupCallOnly] 发送群组通话离开消息失败: $e');
+      }
+    }
+
+    // 离开频道（带超时保护）
+    if (_engine != null && _currentChannelName != null) {
+      try {
+        // 视频通话时，先停止预览并禁用视频
+        if (_callType == CallType.video) {
+          await _engine!
+              .stopPreview()
+              .timeout(const Duration(milliseconds: 800))
+              .catchError((e) {});
+          await _engine!
+              .disableVideo()
+              .timeout(const Duration(milliseconds: 500))
+              .catchError((e) {});
+        }
+
+        // 离开频道
+        await _engine!
+            .leaveChannel()
+            .timeout(const Duration(seconds: 2))
+            .catchError((e) {});
+
+        logger.debug('📞 [leaveGroupCallOnly] 已离开频道');
+      } catch (e) {
+        logger.debug('⚠️ [leaveGroupCallOnly] 离开频道失败: $e');
+      }
+    }
+
+    // 保存最后通话信息
+    _lastGroupId = _currentGroupId;
+    _lastCallType = _callType;
+    if (_currentCallUserId != null) {
+      _lastCallUserId = _currentCallUserId;
+    }
+
+    // 清除通话状态
+    _currentCallUserId = null;
+    _currentChannelName = null;
+    _currentAgoraToken = null;
+    _currentGroupId = null;
+    _remoteUids.clear();
+    _callStartTime = null;
+
+    // 清除最小化标识
+    _isCallMinimized = false;
+    _minimizedCallUserId = null;
+    _minimizedCallDisplayName = null;
+    _minimizedCallType = null;
+    _minimizedIsGroupCall = false;
+    _minimizedGroupId = null;
+
+    // 重置状态为 idle
+    _updateCallState(CallState.idle);
+    logger.debug('📞 [leaveGroupCallOnly] 已离开群组通话，状态重置为 idle');
+
+    return callDuration;
+  }
+
   /// 结束通话
   /// [isLocalHangup] 是否是本地主动挂断（用于决定是否发送通话结束消息）
   Future<void> endCall({bool isLocalHangup = true}) async {
@@ -1170,7 +1268,29 @@ class AgoraService {
 
   /// 处理对方拒绝通话
   void _handleCallRejected(Map<String, dynamic> data) {
-    // logger.debug('📞 对方拒绝了通话');
+    logger.debug('📞 收到拒绝通话消息: $data');
+    
+    // 🔴 修复：群组通话中，有人拒绝不应该结束整个通话
+    // 只需要更新该成员的状态，让UI显示该成员已拒绝
+    if (_isGroupCall()) {
+      logger.debug('📞 群组通话：有成员拒绝，不结束通话，只更新成员状态');
+      
+      // 从消息中获取拒绝者的信息
+      final rejecterId = data['rejecter_user_id'] as int? ?? data['from_user_id'] as int?;
+      final rejecterName = data['rejecter_display_name'] as String? ?? '未知用户';
+      
+      if (rejecterId != null) {
+        // 触发群组成员状态更新回调，通知UI更新该成员状态为"已拒绝"
+        onGroupCallMemberStatusChanged?.call(rejecterId, 'left', rejecterName);
+        logger.debug('📞 群组通话：成员 $rejecterName ($rejecterId) 已拒绝');
+      }
+      
+      // 不调用 endCall()，让通话继续
+      return;
+    }
+    
+    // 单人通话：对方拒绝，结束通话
+    logger.debug('📞 单人通话：对方拒绝了通话');
     onError?.call('对方拒绝了通话');
     // 🔴 对方拒绝，不是本地主动挂断
     endCall(isLocalHangup: false);

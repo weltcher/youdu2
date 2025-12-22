@@ -14145,7 +14145,7 @@ class _DesktopHomePageState extends State<DesktopHomePage> with WindowListener {
                                   'avatarUrl': user.avatar,
                                   'status': user.status,
                                   'work_signature': user.workSignature,
-                                  'phone': user.phone,
+                                  'phone': '',
                                   'email': user.email,
                                   'department': user.department,
                                   'position': user.position,
@@ -20592,7 +20592,6 @@ class _DesktopHomePageState extends State<DesktopHomePage> with WindowListener {
             const SizedBox(height: 32),
             // 详细信息
             _buildInfoItem('签名', _selectedPerson!['work_signature'] ?? '- 未填-'),
-            _buildInfoItem('手机', _selectedPerson!['phone'] ?? '- 未填-'),
             _buildInfoItem('座机', '- 未填-'),
             _buildInfoItem('短号', '- 未填-'),
             _buildInfoItem('邮箱', _selectedPerson!['email'] ?? '- 未填-'),

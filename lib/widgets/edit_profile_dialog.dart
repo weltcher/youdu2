@@ -20,7 +20,6 @@ class EditProfileDialog extends StatefulWidget {
   final String token; // 添加token参数，避免从Storage读取被其他窗口覆盖的token
   final String? fullName;
   final String? gender;
-  final String? phone;
   final String? landline;
   final String? shortNumber;
   final String? email;
@@ -38,7 +37,6 @@ class EditProfileDialog extends StatefulWidget {
     required this.token, // token必须传入
     this.fullName,
     this.gender,
-    this.phone,
     this.landline,
     this.shortNumber,
     this.email,
@@ -61,7 +59,6 @@ class EditProfileDialog extends StatefulWidget {
     required String token, // token必须传入
     String? fullName,
     String? gender,
-    String? phone,
     String? landline,
     String? shortNumber,
     String? email,
@@ -82,7 +79,6 @@ class EditProfileDialog extends StatefulWidget {
         token: token, // 传递token
         fullName: fullName,
         gender: gender,
-        phone: phone,
         landline: landline,
         shortNumber: shortNumber,
         email: email,
@@ -99,7 +95,6 @@ class EditProfileDialog extends StatefulWidget {
 
 class _EditProfileDialogState extends State<EditProfileDialog> {
   late TextEditingController _fullNameController;
-  late TextEditingController _phoneController;
   late TextEditingController _landlineController;
   late TextEditingController _shortNumberController;
   late TextEditingController _emailController;
@@ -116,7 +111,6 @@ class _EditProfileDialogState extends State<EditProfileDialog> {
   void initState() {
     super.initState();
     _fullNameController = TextEditingController(text: widget.fullName);
-    _phoneController = TextEditingController(text: widget.phone);
     _landlineController = TextEditingController(text: widget.landline);
     _shortNumberController = TextEditingController(text: widget.shortNumber);
     _emailController = TextEditingController(text: widget.email);
@@ -130,7 +124,6 @@ class _EditProfileDialogState extends State<EditProfileDialog> {
   @override
   void dispose() {
     _fullNameController.dispose();
-    _phoneController.dispose();
     _landlineController.dispose();
     _shortNumberController.dispose();
     _emailController.dispose();
@@ -539,8 +532,6 @@ class _EditProfileDialogState extends State<EditProfileDialog> {
         const SizedBox(height: 16),
         _buildInputField('账号', null, widget.username, enabled: false),
         const SizedBox(height: 16),
-        _buildInputField('手机', _phoneController, '请输入入手机'),
-        const SizedBox(height: 16),
         _buildInputField('座机', _landlineController, '请输入入座机'),
         const SizedBox(height: 16),
         _buildInputField('短号', _shortNumberController, '请输入入短号'),
@@ -747,7 +738,6 @@ class _EditProfileDialogState extends State<EditProfileDialog> {
     final data = {
       'full_name': _fullNameController.text.trim(),
       'gender': _selectedGender,
-      'phone': _phoneController.text.trim(),
       'landline': _landlineController.text.trim(),
       'short_number': _shortNumberController.text.trim(),
       'email': email,

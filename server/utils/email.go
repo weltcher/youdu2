@@ -32,6 +32,29 @@ func SendEmailCode(toEmail, code string) error {
 	return SendEmail(toEmail, subject, body)
 }
 
+// SendResetPasswordEmail 发送重置密码验证码邮件
+func SendResetPasswordEmail(toEmail, code string) error {
+	subject := "重置密码验证码"
+	body := fmt.Sprintf(`
+		<html>
+		<body style="font-family: Arial, sans-serif; padding: 20px;">
+			<h2 style="color: #4A90E2;">重置密码验证</h2>
+			<p>您好，</p>
+			<p>您正在重置密码，验证码为：</p>
+			<div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0;">
+				<span style="font-size: 24px; font-weight: bold; color: #4A90E2; letter-spacing: 5px;">%s</span>
+			</div>
+			<p>验证码有效期为 %d 分钟，请尽快完成验证。</p>
+			<p>如果这不是您的操作，请忽略此邮件并确保您的账号安全。</p>
+			<hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
+			<p style="color: #999; font-size: 12px;">此邮件由系统自动发送，请勿回复。</p>
+		</body>
+		</html>
+	`, code, config.AppConfig.VerifyCodeExpireMinutes)
+
+	return SendEmail(toEmail, subject, body)
+}
+
 // SendEmail 发送邮件
 func SendEmail(to, subject, body string) error {
 	cfg := config.AppConfig

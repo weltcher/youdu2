@@ -56,8 +56,16 @@ post_install do |installer|
   installer.pods_project.targets.each do |target|
     flutter_additional_ios_build_settings(target)
     
-    # 启用 permission_handler 需要的权限
+    # 强制设置所有 Pod 的最低部署目标为 13.0
     target.build_configurations.each do |config|
+      config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '13.0'
+      
+      # 🔴 禁用 explicit modules 解决 Xcode 16 的 libclang.dylib 问题
+      config.build_settings['SWIFT_COMPILATION_MODE'] = 'wholemodule'
+      config.build_settings['CLANG_ENABLE_MODULES'] = 'YES'
+      config.build_settings['SWIFT_ENABLE_EXPLICIT_MODULES'] = 'NO'
+      
+      # 启用 permission_handler 需要的权限
       config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] ||= [
         '$(inherited)',
         # 相机权限

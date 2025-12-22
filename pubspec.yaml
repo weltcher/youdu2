@@ -66,6 +66,7 @@ dependencies:
   audio_session: ^0.1.25  # 音频会话配置（iOS 播放必需）
   open_filex: ^4.5.0  # 打开文件（用于安装APK）
   package_info_plus: ^8.0.0  # 获取应用版本信息
+  native_exif: ^0.6.0  # 修改图片EXIF信息（用于设置保存时间）
 
 dependency_overrides:
   record_linux: ^1.0.0

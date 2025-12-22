@@ -12,7 +12,6 @@ class UserInfoDialog extends StatefulWidget {
   final String? fullName;
   final String? gender;
   final String? workSignature;
-  final String? phone;
   final String? landline;
   final String? shortNumber;
   final String? email;
@@ -32,7 +31,6 @@ class UserInfoDialog extends StatefulWidget {
     this.fullName,
     this.gender,
     this.workSignature,
-    this.phone,
     this.landline,
     this.shortNumber,
     this.email,
@@ -57,7 +55,6 @@ class UserInfoDialog extends StatefulWidget {
     String? fullName,
     String? gender,
     String? workSignature,
-    String? phone,
     String? landline,
     String? shortNumber,
     String? email,
@@ -78,7 +75,6 @@ class UserInfoDialog extends StatefulWidget {
         fullName: fullName,
         gender: gender,
         workSignature: workSignature,
-        phone: phone,
         landline: landline,
         shortNumber: shortNumber,
         email: email,
@@ -225,70 +221,7 @@ class _UserInfoDialogState extends State<UserInfoDialog> {
         _buildInfoItem('部门：', widget.department),
         _buildInfoItem('职位：', widget.position),
         _buildInfoItem('地区：', widget.region),
-        // 邀请码项（带复制按钮）
-        _buildInviteCodeItem(),
       ],
-    );
-  }
-
-  // 邀请码信息项（带复制按钮）
-  Widget _buildInviteCodeItem() {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 20),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 80,
-            child: Text(
-              '邀请码：',
-              style: const TextStyle(fontSize: 14, color: Color(0xFF666666)),
-            ),
-          ),
-          Expanded(
-            child: Row(
-              children: [
-                Text(
-                  widget.inviteCode != null && widget.inviteCode!.isNotEmpty
-                      ? widget.inviteCode!
-                      : '- 未填写 -',
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: widget.inviteCode != null && widget.inviteCode!.isNotEmpty
-                        ? FontWeight.bold // 邀请码使用粗体
-                        : FontWeight.normal,
-                    color: widget.inviteCode != null && widget.inviteCode!.isNotEmpty
-                        ? const Color(0xFF333333)
-                        : const Color(0xFFCCCCCC),
-                  ),
-                ),
-                if (widget.inviteCode != null && widget.inviteCode!.isNotEmpty) ...[
-                  const SizedBox(width: 8),
-                  InkWell(
-                    onTap: () {
-                      Clipboard.setData(ClipboardData(text: widget.inviteCode!));
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('邀请码已复制到剪贴板'),
-                          duration: Duration(seconds: 2),
-                        ),
-                      );
-                    },
-                    child: Container(
-                      padding: const EdgeInsets.all(4),
-                      child: const Icon(
-                        Icons.copy,
-                        size: 16,
-                        color: Color(0xFF4A90E2),
-                      ),
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-        ],
-      ),
     );
   }
 
@@ -335,7 +268,6 @@ class _UserInfoDialogState extends State<UserInfoDialog> {
             token: widget.token, // 传递token
             fullName: widget.fullName,
             gender: widget.gender,
-            phone: widget.phone,
             landline: widget.landline,
             shortNumber: widget.shortNumber,
             email: widget.email,
@@ -402,7 +334,6 @@ class _UserInfoDialogState extends State<UserInfoDialog> {
         token: token,
         fullName: data['full_name'],
         gender: data['gender'],
-        phone: data['phone'],
         landline: data['landline'],
         shortNumber: data['short_number'],
         department: data['department'],

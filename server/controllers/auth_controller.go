@@ -286,7 +286,48 @@ func (ctrl *AuthController) SendVerificationCode(c *gin.Context) {
 		return
 	}
 
-	// 其他类型（register, reset）使用数据库存储
+	// 如果是重置密码类型，验证邮箱格式并发送邮件
+	if req.Type == "reset" {
+		if !utils.IsValidEmail(req.Account) {
+			utils.BadRequest(c, "请输入正确的邮箱格式")
+			return
+		}
+		
+		// 保存验证码到数据库
+		err := ctrl.codeRepo.Create(req.Account, code, req.Type, expiresAt)
+		if err != nil {
+			utils.LogDebug("保存验证码失败: %v", err)
+			utils.InternalServerError(c, "发送验证码失败")
+			return
+		}
+		
+		// 发送邮件验证码
+		err = utils.SendResetPasswordEmail(req.Account, code)
+		if err != nil {
+			utils.LogDebug("发送邮件失败: %v", err)
+			// 邮件发送失败时，删除数据库中的验证码
+			ctrl.codeRepo.DeleteByAccount(req.Account, req.Type)
+			utils.InternalServerError(c, "邮件发送失败，请稍后重试")
+			return
+		}
+
+		utils.LogDebug("✅ 重置密码验证码已发送: %s (邮箱: %s, 有效期: %d分钟)", code, req.Account, config.AppConfig.VerifyCodeExpireMinutes)
+
+		// 开发环境下返回验证码，生产环境应删除
+		if config.AppConfig.AppEnv == "development" {
+			utils.SuccessWithMessage(c, "验证码已发送到您的邮箱", gin.H{
+				"code":       code,
+				"expires_at": expiresAt,
+			})
+		} else {
+			utils.SuccessWithMessage(c, "验证码已发送到您的邮箱", gin.H{
+				"expires_at": expiresAt,
+			})
+		}
+		return
+	}
+
+	// 其他类型（register）使用数据库存储
 	err := ctrl.codeRepo.Create(req.Account, code, req.Type, expiresAt)
 	if err != nil {
 		utils.LogDebug("保存验证码失败: %v", err)

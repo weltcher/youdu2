@@ -4,7 +4,6 @@ import '../utils/timezone_helper.dart';
 class UserModel {
   final int id;
   final String username;
-  final String? phone;
   final String? email;
   final String avatar;
   final String? authCode;
@@ -24,7 +23,6 @@ class UserModel {
   UserModel({
     required this.id,
     required this.username,
-    this.phone,
     this.email,
     required this.avatar,
     this.authCode,
@@ -47,7 +45,6 @@ class UserModel {
     return UserModel(
       id: json['id'] as int,
       username: json['username'] as String,
-      phone: json['phone'] as String?,
       email: json['email'] as String?,
       avatar: json['avatar'] as String? ?? '',
       authCode: json['auth_code'] as String?,
@@ -71,7 +68,6 @@ class UserModel {
     return {
       'id': id,
       'username': username,
-      'phone': phone,
       'email': email,
       'avatar': avatar,
       'auth_code': authCode,
@@ -94,7 +90,6 @@ class UserModel {
   UserModel copyWith({
     int? id,
     String? username,
-    String? phone,
     String? email,
     String? avatar,
     String? authCode,
@@ -114,7 +109,6 @@ class UserModel {
     return UserModel(
       id: id ?? this.id,
       username: username ?? this.username,
-      phone: phone ?? this.phone,
       email: email ?? this.email,
       avatar: avatar ?? this.avatar,
       authCode: authCode ?? this.authCode,

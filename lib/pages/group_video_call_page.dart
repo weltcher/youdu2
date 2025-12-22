@@ -226,6 +226,14 @@ class _GroupVideoCallPageState extends State<GroupVideoCallPage> {
           if (state == CallState.connected) {
             _stopWaitingSound();
             _statusText = '通话中 (${_connectedMemberIds.length}人)';
+            
+            // 🔴 修改：延迟同步已连接成员列表
+            // 等待 Agora 的 remoteUids 更新后再同步，确保能正确检测已离开的成员
+            Future.delayed(const Duration(milliseconds: 500), () {
+              if (mounted && !_disposed) {
+                _syncConnectedMembers();
+              }
+            });
           }
         });
       }
@@ -450,12 +458,10 @@ class _GroupVideoCallPageState extends State<GroupVideoCallPage> {
           if (!widget.isIncoming) {
             // 发起者：将自己添加到已连接成员列表
             _connectedMemberIds.add(widget.currentUserId!);
-          } else {
-            // 接收者：将发起者添加到已连接成员列表
-            if (widget.targetUserId != null) {
-              _connectedMemberIds.add(widget.targetUserId!);
-            }
           }
+          // 🔴 修改：接收者不再预先标记发起者为已连接
+          // 因为发起者可能在接听前就已经挂断了
+          // 改为在加入频道后通过 Agora 的 remoteUids 来确定实际在线的成员
           _statusText = '通话中 (${_connectedMemberIds.length}人)';
         });
       }
@@ -781,6 +787,68 @@ class _GroupVideoCallPageState extends State<GroupVideoCallPage> {
     }
   }
 
+  // 🔴 新增：同步已连接成员列表
+  // 当成员接听成功后，从 Agora 的 remoteUids 同步已连接成员
+  // 移除那些实际上已经不在通话中的成员
+  void _syncConnectedMembers() {
+    final isGroupCall = widget.groupCallUserIds != null && widget.groupCallUserIds!.isNotEmpty;
+    if (!isGroupCall) return;
+
+    logger.debug('📹 [同步成员] 开始同步已连接成员列表');
+    logger.debug('📹 [同步成员] 当前页面显示的已连接成员: $_connectedMemberIds');
+    logger.debug('📹 [同步成员] Agora remoteUids: ${_agoraService.remoteUids}');
+
+    // 获取 Agora 中实际在线的远程用户
+    final actualRemoteUids = _agoraService.remoteUids;
+
+    // 找出需要移除的成员（在页面显示中但不在 Agora 中）
+    final membersToRemove = <int>[];
+    for (final memberId in _connectedMemberIds) {
+      // 跳过自己（自己不在 remoteUids 中，但应该保留）
+      if (memberId == widget.currentUserId) continue;
+      
+      if (!actualRemoteUids.contains(memberId)) {
+        membersToRemove.add(memberId);
+        logger.debug('📹 [同步成员] 成员 $memberId 不在 Agora 中，需要移除');
+      }
+    }
+
+    // 移除不在通话中的成员
+    if (membersToRemove.isNotEmpty) {
+      setState(() {
+        for (final memberId in membersToRemove) {
+          _connectedMemberIds.remove(memberId);
+          _remoteVideoViews.remove(memberId);
+          
+          // 从显示列表中也移除
+          final userIndex = _currentGroupCallUserIds.indexOf(memberId);
+          if (userIndex != -1) {
+            _currentGroupCallUserIds.removeAt(userIndex);
+            if (userIndex < _currentGroupCallDisplayNames.length) {
+              _currentGroupCallDisplayNames.removeAt(userIndex);
+            }
+            logger.debug('📹 [同步成员] 已从显示列表移除成员: $memberId');
+          }
+        }
+        _statusText = '通话中 (${_connectedMemberIds.length}人)';
+      });
+      logger.debug('📹 [同步成员] 同步完成，移除了 ${membersToRemove.length} 个成员');
+    } else {
+      logger.debug('📹 [同步成员] 同步完成，无需移除成员');
+    }
+
+    // 同时添加 Agora 中存在但页面未显示的成员
+    for (final uid in actualRemoteUids) {
+      if (!_connectedMemberIds.contains(uid)) {
+        _connectedMemberIds.add(uid);
+        _createRemoteVideoView(uid);
+        logger.debug('📹 [同步成员] 添加 Agora 中存在的成员: $uid');
+      }
+    }
+
+    logger.debug('📹 [同步成员] 最终已连接成员: $_connectedMemberIds');
+  }
+
   // 挂断通话
   void _hangUp() async {
     // 立即显示"正在退出..."
@@ -788,14 +856,21 @@ class _GroupVideoCallPageState extends State<GroupVideoCallPage> {
       _exitStatusText = '正在退出...';
     });
 
-    // 🔴 修复：在结束通话前，先计算通话时长
+    // 🔴 优化：群组视频通话中挂断只离开自己，不结束整个通话
+    final isGroupCall = widget.groupCallUserIds != null && widget.groupCallUserIds!.isNotEmpty;
     int callDuration = 0;
-    if (_agoraService.callStartTime != null) {
-      final elapsed = DateTime.now().difference(_agoraService.callStartTime!);
-      callDuration = elapsed.inSeconds;
+    
+    if (isGroupCall) {
+      logger.debug('📹 群组视频通话挂断，只离开自己');
+      callDuration = await _agoraService.leaveGroupCallOnly();
+    } else {
+      // 单人通话：计算通话时长并结束通话
+      if (_agoraService.callStartTime != null) {
+        final elapsed = DateTime.now().difference(_agoraService.callStartTime!);
+        callDuration = elapsed.inSeconds;
+      }
+      await _endCall();
     }
-
-    await _endCall();
 
     if (mounted) {
       // 🔴 修复：返回完整的通话结束信息，包括时长和类型
@@ -816,8 +891,15 @@ class _GroupVideoCallPageState extends State<GroupVideoCallPage> {
     // 停止等待音效
     _stopWaitingSound();
 
-    // 拒绝通话
-    await _agoraService.rejectCall();
+    // 🔴 优化：群组视频通话中拒绝只离开自己，不结束整个通话
+    final isGroupCall = widget.groupCallUserIds != null && widget.groupCallUserIds!.isNotEmpty;
+    if (isGroupCall) {
+      logger.debug('📹 群组视频通话拒接，只离开自己');
+      await _agoraService.leaveGroupCallOnly();
+    } else {
+      // 单人通话：拒绝通话
+      await _agoraService.rejectCall();
+    }
 
     // 返回拒绝状态
     if (mounted) {

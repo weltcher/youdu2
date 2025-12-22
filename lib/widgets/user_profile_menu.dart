@@ -24,7 +24,6 @@ class UserProfileMenu extends StatefulWidget {
   final String? fullName;
   final String? gender;
   final String? workSignature;
-  final String? phone;
   final String? landline;
   final String? shortNumber;
   final String? email;
@@ -48,7 +47,6 @@ class UserProfileMenu extends StatefulWidget {
     this.fullName,
     this.gender,
     this.workSignature,
-    this.phone,
     this.landline,
     this.shortNumber,
     this.email,
@@ -77,7 +75,6 @@ class UserProfileMenu extends StatefulWidget {
     String? fullName,
     String? gender,
     String? workSignature,
-    String? phone,
     String? landline,
     String? shortNumber,
     String? email,
@@ -119,7 +116,6 @@ class UserProfileMenu extends StatefulWidget {
                   fullName: fullName,
                   gender: gender,
                   workSignature: workSignature,
-                  phone: phone,
                   landline: landline,
                   shortNumber: shortNumber,
                   email: email,
@@ -147,7 +143,6 @@ class _UserProfileMenuState extends State<UserProfileMenu> {
   String? _currentAvatar; // 当前头像URL
   String? _currentFullName; // 当前昵称
   String? _currentGender; // 当前性别
-  String? _currentPhone; // 当前手机号
   String? _currentLandline; // 当前座机
   String? _currentShortNumber; // 当前短号
   String? _currentEmail; // 当前邮箱
@@ -164,7 +159,6 @@ class _UserProfileMenuState extends State<UserProfileMenu> {
     _currentAvatar = widget.avatar; // 初始化时使用传入的头像
     _currentFullName = widget.fullName; // 初始化时使用传入的昵称
     _currentGender = widget.gender; // 初始化时使用传入的性别
-    _currentPhone = widget.phone;
     _currentLandline = widget.landline;
     _currentShortNumber = widget.shortNumber;
     _currentEmail = widget.email;
@@ -271,7 +265,6 @@ class _UserProfileMenuState extends State<UserProfileMenu> {
           fullName: _currentFullName,
           gender: _currentGender ?? widget.gender,
           workSignature: _currentWorkSignature,
-          phone: _currentPhone,
           landline: _currentLandline,
           shortNumber: _currentShortNumber,
           email: _currentEmail,
@@ -295,7 +288,6 @@ class _UserProfileMenuState extends State<UserProfileMenu> {
                     _currentFullName = userData['full_name'] as String?;
                     _currentGender = userData['gender'] as String?;
                     _currentWorkSignature = userData['work_signature'] as String?;
-                    _currentPhone = userData['phone'] as String?;
                     _currentLandline = userData['landline'] as String?;
                     _currentShortNumber = userData['short_number'] as String?;
                     _currentEmail = userData['email'] as String?;

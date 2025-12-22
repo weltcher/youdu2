@@ -72,3 +72,8 @@ certs/
 admin/node_modules/*
 scripts/redis/dump.rdb
 server.exe
+
+admin/dist
+admin/dist/*
+dist.tar.gz
+youdu-server

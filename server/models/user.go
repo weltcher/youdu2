@@ -10,7 +10,6 @@ type User struct {
 	ID            int       `json:"id"`
 	Username      string    `json:"username"`
 	Password      string    `json:"-"` // 密码不返回到前端
-	Phone         *string   `json:"phone"`
 	Email         *string   `json:"email"`
 	Avatar        string    `json:"avatar"`
 	AuthCode      *string   `json:"auth_code"`
@@ -72,7 +71,7 @@ func (r *UserRepository) Create(username, fullName, password, inviteCode, invite
 	query := `
 		INSERT INTO users (username, full_name, password, invite_code, invited_by_code, status)
 		VALUES ($1, $2, $3, $4, $5, 'offline')
-		RETURNING id, username, phone, email, avatar, auth_code, full_name, gender, 
+		RETURNING id, username, email, avatar, auth_code, full_name, gender, 
 		          work_signature, status, landline, short_number, department, position, region,
 		          invite_code, invited_by_code, created_at, updated_at
 	`
@@ -81,7 +80,6 @@ func (r *UserRepository) Create(username, fullName, password, inviteCode, invite
 	err := r.DB.QueryRow(query, username, fullName, password, inviteCode, invitedByCode).Scan(
 		&user.ID,
 		&user.Username,
-		&user.Phone,
 		&user.Email,
 		&user.Avatar,
 		&user.AuthCode,
@@ -110,7 +108,7 @@ func (r *UserRepository) Create(username, fullName, password, inviteCode, invite
 // FindByUsername 根据用户名查找用户
 func (r *UserRepository) FindByUsername(username string) (*User, error) {
 	query := `
-		SELECT id, username, password, phone, email, avatar, auth_code, full_name, gender, 
+		SELECT id, username, password, email, avatar, auth_code, full_name, gender, 
 		       work_signature, status, landline, short_number, department, position, region,
 		       invite_code, invited_by_code, created_at, updated_at
 		FROM users
@@ -122,7 +120,6 @@ func (r *UserRepository) FindByUsername(username string) (*User, error) {
 		&user.ID,
 		&user.Username,
 		&user.Password,
-		&user.Phone,
 		&user.Email,
 		&user.Avatar,
 		&user.AuthCode,
@@ -151,7 +148,7 @@ func (r *UserRepository) FindByUsername(username string) (*User, error) {
 // FindByID 根据ID查找用户
 func (r *UserRepository) FindByID(id int) (*User, error) {
 	query := `
-		SELECT id, username, password, phone, email, avatar, auth_code, full_name, gender, 
+		SELECT id, username, password, email, avatar, auth_code, full_name, gender, 
 		       work_signature, status, landline, short_number, department, position, region,
 		       invite_code, invited_by_code, created_at, updated_at
 		FROM users
@@ -163,7 +160,6 @@ func (r *UserRepository) FindByID(id int) (*User, error) {
 		&user.ID,
 		&user.Username,
 		&user.Password,
-		&user.Phone,
 		&user.Email,
 		&user.Avatar,
 		&user.AuthCode,
@@ -189,14 +185,14 @@ func (r *UserRepository) FindByID(id int) (*User, error) {
 	return user, nil
 }
 
-// FindByAccount 根据账号（用户名/手机号/邮箱）查找用户
+// FindByAccount 根据账号（用户名/邮箱）查找用户
 func (r *UserRepository) FindByAccount(account string) (*User, error) {
 	query := `
-		SELECT id, username, password, phone, email, avatar, auth_code, full_name, gender, 
+		SELECT id, username, password, email, avatar, auth_code, full_name, gender, 
 		       work_signature, status, landline, short_number, department, position, region,
 		       invite_code, invited_by_code, created_at, updated_at
 		FROM users
-		WHERE username = $1 OR phone = $1 OR email = $1
+		WHERE username = $1 OR email = $1
 	`
 
 	user := &User{}
@@ -204,7 +200,6 @@ func (r *UserRepository) FindByAccount(account string) (*User, error) {
 		&user.ID,
 		&user.Username,
 		&user.Password,
-		&user.Phone,
 		&user.Email,
 		&user.Avatar,
 		&user.AuthCode,
@@ -233,7 +228,7 @@ func (r *UserRepository) FindByAccount(account string) (*User, error) {
 // FindByInviteCode 根据邀请码查找用户
 func (r *UserRepository) FindByInviteCode(inviteCode string) (*User, error) {
 	query := `
-		SELECT id, username, password, phone, email, avatar, auth_code, full_name, gender, 
+		SELECT id, username, password, email, avatar, auth_code, full_name, gender, 
 		       work_signature, status, landline, short_number, department, position, region,
 		       invite_code, invited_by_code, created_at, updated_at
 		FROM users
@@ -245,7 +240,6 @@ func (r *UserRepository) FindByInviteCode(inviteCode string) (*User, error) {
 		&user.ID,
 		&user.Username,
 		&user.Password,
-		&user.Phone,
 		&user.Email,
 		&user.Avatar,
 		&user.AuthCode,
@@ -341,18 +335,6 @@ func (r *UserRepository) UpdatePasswordByID(id int, newPassword string) error {
 	return err
 }
 
-// UpdatePhone 更新手机号
-func (r *UserRepository) UpdatePhone(id int, phone string) error {
-	query := `
-		UPDATE users
-		SET phone = $1
-		WHERE id = $2
-	`
-
-	_, err := r.DB.Exec(query, phone, id)
-	return err
-}
-
 // UpdateEmail 更新邮箱
 func (r *UserRepository) UpdateEmail(id int, email string) error {
 	query := `
@@ -393,7 +375,6 @@ func (r *UserRepository) UpdateStatus(id int, status string) error {
 type UpdateProfileRequest struct {
 	FullName    *string `json:"full_name"`
 	Gender      *string `json:"gender"`
-	Phone       *string `json:"phone"`
 	Landline    *string `json:"landline"`
 	ShortNumber *string `json:"short_number"`
 	Department  *string `json:"department"`
@@ -408,20 +389,18 @@ func (r *UserRepository) UpdateProfile(id int, req UpdateProfileRequest) error {
 		UPDATE users
 		SET full_name = COALESCE($1, full_name),
 		    gender = COALESCE($2, gender),
-		    phone = COALESCE($3, phone),
-		    landline = COALESCE($4, landline),
-		    short_number = COALESCE($5, short_number),
-		    department = COALESCE($6, department),
-		    position = COALESCE($7, position),
-		    region = COALESCE($8, region),
-		    avatar = COALESCE($9, avatar)
-		WHERE id = $10
+		    landline = COALESCE($3, landline),
+		    short_number = COALESCE($4, short_number),
+		    department = COALESCE($5, department),
+		    position = COALESCE($6, position),
+		    region = COALESCE($7, region),
+		    avatar = COALESCE($8, avatar)
+		WHERE id = $9
 	`
 
 	_, err := r.DB.Exec(query,
 		req.FullName,
 		req.Gender,
-		req.Phone,
 		req.Landline,
 		req.ShortNumber,
 		req.Department,
@@ -433,30 +412,10 @@ func (r *UserRepository) UpdateProfile(id int, req UpdateProfileRequest) error {
 	return err
 }
 
-// IsPhoneUsedByOthers 检查手机号是否被其他用户使用
-// excludeUserID: 排除的用户ID（当前用户）
-// phone: 要检查的手机号
-// 返回: true表示已被其他用户使用，false表示未被使用或只被当前用户使用
-func (r *UserRepository) IsPhoneUsedByOthers(excludeUserID int, phone string) (bool, error) {
-	query := `
-		SELECT COUNT(*)
-		FROM users
-		WHERE phone = $1 AND id != $2
-	`
-
-	var count int
-	err := r.DB.QueryRow(query, phone, excludeUserID).Scan(&count)
-	if err != nil {
-		return false, err
-	}
-
-	return count > 0, nil
-}
-
 // FindByEmail 根据邮箱查找用户
 func (r *UserRepository) FindByEmail(email string) (*User, error) {
 	query := `
-		SELECT id, username, password, phone, email, avatar, auth_code, full_name, gender, 
+		SELECT id, username, password, email, avatar, auth_code, full_name, gender, 
 		       work_signature, status, landline, short_number, department, position, region,
 		       invite_code, invited_by_code, created_at, updated_at
 		FROM users
@@ -468,7 +427,6 @@ func (r *UserRepository) FindByEmail(email string) (*User, error) {
 		&user.ID,
 		&user.Username,
 		&user.Password,
-		&user.Phone,
 		&user.Email,
 		&user.Avatar,
 		&user.AuthCode,

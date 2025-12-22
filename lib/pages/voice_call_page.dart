@@ -194,14 +194,13 @@ class _VoiceCallPageState extends State<VoiceCallPage> {
     _setupAgoraCallbacks();
     logger.debug('📱 Agora回调设置完成');
 
-    // 🔴 新增：群组通话来电时，将发起者标记为已连接
+    // 🔴 修改：群组通话来电时，不再预先标记发起者为已连接
+    // 因为发起者可能在接听前就已经挂断了
+    // 改为在加入频道后通过 Agora 的 remoteUids 来确定实际在线的成员
     if (widget.isIncoming &&
         widget.groupCallUserIds != null &&
         widget.groupCallUserIds!.isNotEmpty) {
-      // 发起者是 targetUserId
-      _connectedMemberIds.add(widget.targetUserId);
-      logger.debug('📱 群组通话来电：将发起者 ${widget.targetUserId} 标记为已连接');
-      logger.debug('📱 当前已连接成员: $_connectedMemberIds');
+      logger.debug('📱 群组通话来电：不预先标记发起者为已连接，等待 Agora 同步实际在线成员');
     }
 
     // 延迟启动通话，避免在 initState 中访问 inherited widgets
@@ -433,6 +432,14 @@ class _VoiceCallPageState extends State<VoiceCallPage> {
         // 通话接通时停止等待音效
         _stopSound();
         _startCallTimer();
+
+        // 🔴 修改：延迟同步已连接成员列表
+        // 等待 Agora 的 remoteUids 更新后再同步，确保能正确检测已离开的成员
+        Future.delayed(const Duration(milliseconds: 500), () {
+          if (mounted && !_disposed) {
+            _syncConnectedMembers();
+          }
+        });
 
         // 通话连接成功后，加载设备列表并应用保存的配置
         _initializeDevices();
@@ -952,6 +959,68 @@ class _VoiceCallPageState extends State<VoiceCallPage> {
     // 计时逻辑已移至 CallDurationWidget 组件
   }
 
+  // 🔴 新增：同步已连接成员列表
+  // 当成员接听成功后，从 Agora 的 remoteUids 同步已连接成员
+  // 移除那些实际上已经不在通话中的成员
+  void _syncConnectedMembers() {
+    final isGroupCall = widget.groupCallUserIds != null && widget.groupCallUserIds!.isNotEmpty;
+    if (!isGroupCall) return;
+
+    logger.debug('📞 [同步成员] 开始同步已连接成员列表');
+    logger.debug('📞 [同步成员] 当前页面显示的已连接成员: $_connectedMemberIds');
+    logger.debug('📞 [同步成员] Agora remoteUids: ${_agoraService.remoteUids}');
+
+    // 获取 Agora 中实际在线的远程用户
+    final actualRemoteUids = _agoraService.remoteUids;
+
+    // 找出需要移除的成员（在页面显示中但不在 Agora 中）
+    final membersToRemove = <int>[];
+    for (final memberId in _connectedMemberIds) {
+      // 跳过自己（自己不在 remoteUids 中，但应该保留）
+      if (memberId == widget.currentUserId) continue;
+      
+      if (!actualRemoteUids.contains(memberId)) {
+        membersToRemove.add(memberId);
+        logger.debug('📞 [同步成员] 成员 $memberId 不在 Agora 中，需要移除');
+      }
+    }
+
+    // 移除不在通话中的成员
+    if (membersToRemove.isNotEmpty) {
+      setState(() {
+        for (final memberId in membersToRemove) {
+          _connectedMemberIds.remove(memberId);
+          
+          // 从显示列表中也移除
+          final userIndex = _currentGroupCallUserIds.indexOf(memberId);
+          if (userIndex != -1) {
+            _currentGroupCallUserIds.removeAt(userIndex);
+            if (userIndex < _currentGroupCallDisplayNames.length) {
+              _currentGroupCallDisplayNames.removeAt(userIndex);
+            }
+            if (userIndex < _currentGroupCallAvatarUrls.length) {
+              _currentGroupCallAvatarUrls.removeAt(userIndex);
+            }
+            logger.debug('📞 [同步成员] 已从显示列表移除成员: $memberId');
+          }
+        }
+      });
+      logger.debug('📞 [同步成员] 同步完成，移除了 ${membersToRemove.length} 个成员');
+    } else {
+      logger.debug('📞 [同步成员] 同步完成，无需移除成员');
+    }
+
+    // 同时添加 Agora 中存在但页面未显示的成员
+    for (final uid in actualRemoteUids) {
+      if (!_connectedMemberIds.contains(uid)) {
+        _connectedMemberIds.add(uid);
+        logger.debug('📞 [同步成员] 添加 Agora 中存在的成员: $uid');
+      }
+    }
+
+    logger.debug('📞 [同步成员] 最终已连接成员: $_connectedMemberIds');
+  }
+
   // 接听
   Future<void> _acceptCall() async {
     await _agoraService.acceptCall();
@@ -965,8 +1034,15 @@ class _VoiceCallPageState extends State<VoiceCallPage> {
     // 停止等待音效
     await _stopSound();
 
-    // 拒绝通话
-    await _agoraService.rejectCall();
+    // 🔴 优化：群组通话中拒绝只离开自己，不结束整个通话
+    final isGroupCall = widget.groupCallUserIds != null && widget.groupCallUserIds!.isNotEmpty;
+    if (isGroupCall) {
+      logger.debug('📱 群组通话拒接，只离开自己');
+      await _agoraService.leaveGroupCallOnly();
+    } else {
+      // 单人通话：拒绝通话
+      await _agoraService.rejectCall();
+    }
 
     // 🔴 修改：立即关闭页面，返回拒绝状态和通话类型
     logger.debug('📱 拒接通话，立即关闭页面');
@@ -994,19 +1070,26 @@ class _VoiceCallPageState extends State<VoiceCallPage> {
     // 🔴 修复：判断是否是取消通话（发起方在 calling 状态下挂断）
     final isCancelled = !widget.isIncoming && _callState == CallState.calling;
 
-    // 🔴 修复：在结束通话前，先计算最终的通话时长
-    // 如果计时器还在运行，使用当前的 _callDuration
-    // 如果计时器已停止，尝试从 agoraService 获取通话开始时间来计算
-    int finalCallDuration = _callDuration;
-    if (finalCallDuration == 0 && _agoraService.callStartTime != null) {
-      final elapsed = DateTime.now().difference(_agoraService.callStartTime!);
-      finalCallDuration = elapsed.inSeconds;
-      logger.debug('📱 从 callStartTime 计算通话时长: $finalCallDuration 秒');
-    }
-    logger.debug('📱 最终通话时长: $finalCallDuration 秒');
+    // 🔴 优化：群组通话中挂断只离开自己，不结束整个通话
+    final isGroupCall = widget.groupCallUserIds != null && widget.groupCallUserIds!.isNotEmpty;
+    int finalCallDuration = 0;
+    
+    if (isGroupCall) {
+      logger.debug('📱 群组通话挂断，只离开自己');
+      finalCallDuration = await _agoraService.leaveGroupCallOnly();
+    } else {
+      // 单人通话：计算通话时长并结束通话
+      finalCallDuration = _callDuration;
+      if (finalCallDuration == 0 && _agoraService.callStartTime != null) {
+        final elapsed = DateTime.now().difference(_agoraService.callStartTime!);
+        finalCallDuration = elapsed.inSeconds;
+        logger.debug('📱 从 callStartTime 计算通话时长: $finalCallDuration 秒');
+      }
+      logger.debug('📱 最终通话时长: $finalCallDuration 秒');
 
-    // 结束通话（用户主动挂断，isLocalHangup = true）
-    await _agoraService.endCall(isLocalHangup: true);
+      // 结束通话（用户主动挂断，isLocalHangup = true）
+      await _agoraService.endCall(isLocalHangup: true);
+    }
 
     // 🔴 修改：立即关闭页面，返回相应的标记和通话类型
     logger.debug('📱 主动挂断，立即关闭页面');

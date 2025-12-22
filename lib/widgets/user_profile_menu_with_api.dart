@@ -55,7 +55,6 @@ class UserProfileMenuWithAPI {
             fullName: user.fullName,
             gender: user.gender,
             workSignature: user.workSignature,
-            phone: user.phone,
             landline: user.landline,
             shortNumber: user.shortNumber,
             email: user.email,

@@ -158,34 +158,13 @@ func (ctrl *UserController) UpdateProfile(c *gin.Context) {
 	}
 
 	utils.LogDebug("📝 更新用户 %d 的个人信息", userID.(int))
-	utils.LogDebug("   请求数据: FullName=%v, Gender=%v, Phone=%v, Avatar=%v",
-		req.FullName, req.Gender, req.Phone, req.Avatar)
+	utils.LogDebug("   请求数据: FullName=%v, Gender=%v, Avatar=%v",
+		req.FullName, req.Gender, req.Avatar)
 
 	// 验证性别值
 	if req.Gender != nil && *req.Gender != "" {
 		if *req.Gender != "male" && *req.Gender != "female" && *req.Gender != "other" {
 			utils.BadRequest(c, "性别值必须是 male、female 或 other")
-			return
-		}
-	}
-
-	// 如果要更新手机号，检查手机号是否已被其他用户使用
-	if req.Phone != nil && *req.Phone != "" {
-		// 验证手机号格式
-		if !utils.IsValidPhoneNumber(*req.Phone) {
-			utils.BadRequest(c, "请输入正确的手机号格式")
-			return
-		}
-
-		// 检查手机号是否已被其他用户绑定
-		isUsed, err := ctrl.userRepo.IsPhoneUsedByOthers(userID.(int), *req.Phone)
-		if err != nil {
-			utils.LogDebug("❌ 检查手机号失败: %v", err)
-			utils.InternalServerError(c, "检查手机号失败")
-			return
-		}
-		if isUsed {
-			utils.BadRequest(c, "该手机号已被其他用户绑定")
 			return
 		}
 	}

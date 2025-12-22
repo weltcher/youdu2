@@ -24,12 +24,6 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
     letterSpacing: 0,
   );
 
-  // 验证手机号格式
-  bool _isValidPhone(String phone) {
-    final phoneRegex = RegExp(r'^1[3-9]\d{9}$');
-    return phoneRegex.hasMatch(phone);
-  }
-
   // 验证邮箱格式
   bool _isValidEmail(String email) {
     final emailRegex = RegExp(
@@ -43,19 +37,19 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
     final contact = _contactController.text.trim();
     if (contact.isEmpty) {
       setState(() {
-        _errorMessage = '请输入手机号或邮箱';
+        _errorMessage = '请输入邮箱';
       });
       return false;
     }
 
-    if (_isValidPhone(contact) || _isValidEmail(contact)) {
+    if (_isValidEmail(contact)) {
       setState(() {
         _errorMessage = null;
       });
       return true;
     } else {
       setState(() {
-        _errorMessage = '请输入正确的手机号或邮箱格式';
+        _errorMessage = '请输入正确的邮箱格式';
       });
       return false;
     }
@@ -204,7 +198,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
             const SizedBox(height: 20),
             // 说明文字
             const Text(
-              '请填写你在企业内绑定的手机号或邮箱，以便接收验证码',
+              '请填写你在企业内绑定的邮箱，以便接收验证码',
               style: TextStyle(
                 fontSize: 14,
                 color: Color(0xFF666666),
@@ -212,7 +206,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
               ),
             ),
             const SizedBox(height: 40),
-            // 手机号/邮箱输入框
+            // 邮箱输入框
             _buildInputField(),
             const SizedBox(height: 150),
             // 下一步按钮
@@ -230,7 +224,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('手机号/邮箱', style: _labelStyle),
+        const Text('邮箱', style: _labelStyle),
         const SizedBox(height: 8),
         Container(
           height: 42,
@@ -250,7 +244,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
               }
             },
             decoration: const InputDecoration(
-              hintText: '请输入手机号或邮箱',
+              hintText: '请输入邮箱',
               hintStyle: TextStyle(color: Color(0xFFCCCCCC), fontSize: 14),
               border: InputBorder.none,
               isDense: true,

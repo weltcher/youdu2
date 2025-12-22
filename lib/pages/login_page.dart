@@ -24,8 +24,6 @@ class LoginPage extends StatefulWidget {
 class _LoginPageState extends State<LoginPage> {
   final TextEditingController _accountController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
-  final TextEditingController _phoneController = TextEditingController();
-  final TextEditingController _verifyCodeController = TextEditingController();
   // PC端保留记住密码和自动登录选项
   bool _rememberPassword = false;
   bool _autoLogin = false;
@@ -33,13 +31,6 @@ class _LoginPageState extends State<LoginPage> {
   String _selectedLanguage = '简体中文'; // 当前选择的语言
   bool _canLogin = false;
   bool _isLoading = false; // 登录加载状态
-
-  // 验证码倒计时相关
-  int _countdown = 0;
-  bool _isCountingDown = false;
-
-  // 登录方式选择：0=账号登录，1=验证码登录
-  int _selectedTabIndex = 0;
 
   // 检测是否是PC端
   bool get _isDesktop => Platform.isWindows || Platform.isMacOS || Platform.isLinux;
@@ -73,8 +64,6 @@ class _LoginPageState extends State<LoginPage> {
       setState(() {
         _accountController.clear();
         _passwordController.clear();
-        _phoneController.clear();
-        _verifyCodeController.clear();
       });
       return;
     }
@@ -266,199 +255,6 @@ class _LoginPageState extends State<LoginPage> {
     }
   }
 
-  // 处理验证码登录
-  Future<void> _handleVerifyCodeLogin() async {
-    final account = _phoneController.text.trim();
-    final code = _verifyCodeController.text.trim();
-
-    // 验证手机号格式
-    if (!_isValidPhoneNumber(account)) {
-      _showError('请输入正确的手机号格式');
-      return;
-    }
-
-    // 验证验证码格式
-    if (!_isValidVerifyCode(code)) {
-      _showError('验证码必须是6位数字');
-      return;
-    }
-
-    // 设置加载状态
-    setState(() {
-      _isLoading = true;
-    });
-
-    try {
-      final result = await ApiService.verifyCodeLogin(
-        account: account,
-        code: code,
-      );
-
-      if (result['code'] == 0) {
-        // 登录成功
-        final token = result['data']['token'];
-        final user = result['data']['user'];
-
-        // 保存token和用户信息
-        await Storage.saveLoginInfo(
-          token: token,
-          userId: user['id'],
-          username: user['username'],
-          fullName: user['full_name'],
-          avatar: user['avatar'],
-        );
-
-        // 重新初始化日志系统（使用用户ID）
-        await logger.init(userId: user['id'].toString());
-        logger.info('📝 日志系统已重新初始化，用户ID: ${user['id']}');
-
-        // 验证码登录：保存手机号但不保存验证码（验证码是一次性的）
-        if (_isDesktop) {
-          // PC端：根据用户选择保存配置
-          await Storage.saveRememberPassword(user['id'], _rememberPassword);
-          await Storage.saveAutoLogin(user['id'], _autoLogin);
-          
-          if (_rememberPassword) {
-            await Storage.saveSavedAccount(user['id'], account);
-            logger.debug('✅ PC端验证码登录：已保存手机号');
-          }
-          await Storage.saveSavedPassword(user['id'], ''); // 清空密码字段
-        } else {
-          // 移动端：自动保存配置
-          await Storage.saveRememberPassword(user['id'], true);
-          await Storage.saveAutoLogin(user['id'], true);
-          await Storage.saveSavedAccount(user['id'], account);
-          await Storage.saveSavedPassword(user['id'], ''); // 清空密码字段
-          logger.debug('✅ 移动端验证码登录：登录配置已自动保存（记住密码: true, 自动登录: true）');
-        }
-
-        // 注意：用户状态已在后端登录接口中自动设置为 online，无需前端再次设置
-        logger.debug('✅ 用户登录成功，状态: ${user['status']}');
-
-        // 🔴 登录成功后清除所有本地缓存
-        logger.info('🗑️ 验证码登录成功，开始清除所有本地缓存...');
-        MobileChatPage.clearAllCache();
-        MobileContactsPage.clearAllCache();
-        MobileHomePage.clearAllCache();
-        logger.info('✅ 所有本地缓存已清除，即将重新加载数据');
-
-        _showSuccess('登录成功');
-
-        // 跳转到主页
-        if (mounted) {
-          Navigator.pushReplacementNamed(context, '/home');
-        }
-      } else {
-        // 登录失败，重置加载状态
-        setState(() {
-          _isLoading = false;
-        });
-
-        // 显示错误消息（服务器会自动踢掉已登录的设备，不需要特殊处理）
-        final message = result['message'] ?? '登录失败';
-        _showError(message);
-      }
-    } catch (e) {
-      // 出错时重置加载状态
-      setState(() {
-        _isLoading = false;
-      });
-      _showError('登录失败: $e');
-    }
-  }
-
-  // 验证手机号格式
-  bool _isValidPhoneNumber(String phone) {
-    // 中国大陆手机号：1开头，第二位是3-9，共11位数字
-    final RegExp phoneRegex = RegExp(r'^1[3-9]\d{9}$');
-    return phoneRegex.hasMatch(phone);
-  }
-
-  // 验证验证码格式
-  bool _isValidVerifyCode(String code) {
-    // 验证码必须是6位纯数字
-    final RegExp codeRegex = RegExp(r'^\d{6}$');
-    return codeRegex.hasMatch(code);
-  }
-
-  // 发送验证码
-  Future<void> _sendVerifyCode() async {
-    logger.debug('=== 开始发送验证码 ===');
-    // 如果正在倒计时，不处理
-    if (_isCountingDown) {
-      logger.debug('倒计时中，忽略点击');
-      return;
-    }
-
-    final phone = _phoneController.text.trim();
-    logger.debug('手机号/账号: $phone');
-
-    if (phone.isEmpty) {
-      _showError('请输入手机号');
-      return;
-    }
-
-    // 验证手机号格式
-    if (!_isValidPhoneNumber(phone)) {
-      _showError('请输入正确的手机号格式');
-      return;
-    }
-
-    try {
-      logger.debug('调用API发送验证码...');
-      final result = await ApiService.sendVerifyCode(
-        account: phone,
-        type: 'login',
-      );
-
-      logger.debug('API返回结果: $result');
-
-      if (result['code'] == 0) {
-        _showSuccess('验证码已发送');
-        // 开发环境下服务器会返回验证码
-        if (result['data'] != null && result['data']['code'] != null) {
-          logger.debug('✅ 验证码: ${result['data']['code']}');
-        }
-
-        // 启动倒计时
-        logger.debug('启动倒计时...');
-        _startCountdown();
-      } else {
-        logger.debug('❌ 发送失败: ${result['message']}');
-        _showError(result['message'] ?? '发送失败');
-      }
-    } catch (e) {
-      logger.debug('❌ 发送验证码异常: $e');
-      _showError('发送验证码失败: $e');
-    }
-  }
-
-  // 启动倒计时
-  void _startCountdown() {
-    setState(() {
-      _countdown = 120;
-      _isCountingDown = true;
-    });
-
-    // 开始倒计时
-    Future.doWhile(() async {
-      await Future.delayed(const Duration(seconds: 1));
-      if (!mounted) return false;
-
-      setState(() {
-        _countdown--;
-      });
-
-      if (_countdown <= 0) {
-        setState(() {
-          _isCountingDown = false;
-        });
-        return false;
-      }
-      return true;
-    });
-  }
-
   // 显示错误提示
   void _showError(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
@@ -488,8 +284,6 @@ class _LoginPageState extends State<LoginPage> {
     _passwordController.removeListener(_checkCanLogin);
     _accountController.dispose();
     _passwordController.dispose();
-    _phoneController.dispose();
-    _verifyCodeController.dispose();
     super.dispose();
   }
 
@@ -575,7 +369,7 @@ class _LoginPageState extends State<LoginPage> {
         _buildInputField(
           label: l10n.translate('account'),
           controller: _accountController,
-          hintText: '请输入用户名/手机号/邮箱',
+          hintText: '请输入用户名/邮箱',
         ),
         const SizedBox(height: 20),
         // 密码输入框
@@ -595,82 +389,6 @@ class _LoginPageState extends State<LoginPage> {
         _buildForgotPassword(),
         const SizedBox(height: 38),
       ],
-    );
-  }
-
-  // 验证码登录表单
-  Widget _buildVerifyCodeLoginForm() {
-    final l10n = AppLocalizations.of(context);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        // 手机号输入框
-        _buildInputField(
-          label: l10n.translate('phone_number'),
-          controller: _phoneController,
-          hintText: l10n.translate('phone_number'),
-        ),
-        const SizedBox(height: 20),
-        // 验证码输入框
-        _buildVerifyCodeField(),
-        const SizedBox(height: 68), // 移除复选框后增加间距
-        // 移动端不再显示"下次自动登录"选项
-        // _buildAutoLoginCheckbox(),
-        // const SizedBox(height: 48),
-        // 登录按钮
-        _buildLoginButton(),
-        const SizedBox(height: 20),
-        // 忘记密码
-        _buildForgotPassword(),
-        const SizedBox(height: 38),
-      ],
-    );
-  }
-
-  Widget _buildTabBar() {
-    final l10n = AppLocalizations.of(context);
-    return Row(
-      children: [
-        _buildTab(l10n.translate('account_login'), 0),
-        const SizedBox(width: 40),
-        _buildTab(l10n.translate('verify_code_login'), 1),
-      ],
-    );
-  }
-
-  Widget _buildTab(String text, int index) {
-    final isSelected = _selectedTabIndex == index;
-    return GestureDetector(
-      onTap: () {
-        setState(() {
-          _selectedTabIndex = index;
-          _checkCanLogin(); // 切换tab时重新检查
-        });
-      },
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            text,
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
-              color: isSelected
-                  ? const Color(0xFF333333)
-                  : const Color(0xFF999999),
-            ),
-          ),
-          const SizedBox(height: 8),
-          Container(
-            width: 40,
-            height: 3,
-            decoration: BoxDecoration(
-              color: isSelected ? const Color(0xFF4A90E2) : Colors.transparent,
-              borderRadius: BorderRadius.circular(1.5),
-            ),
-          ),
-        ],
-      ),
     );
   }
 
@@ -761,77 +479,6 @@ class _LoginPageState extends State<LoginPage> {
               ),
             ),
           ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildVerifyCodeField() {
-    final l10n = AppLocalizations.of(context);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(l10n.translate('verify_code'), style: _labelStyle),
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            Expanded(
-              child: Container(
-                height: 42,
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF5F5F5),
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                child: TextField(
-                  controller: _verifyCodeController,
-                  textAlignVertical: TextAlignVertical.center,
-                  onSubmitted: (_) {
-                    // 按下 Enter 键时，如果可以登录则执行登录
-                    if (_canLogin) {
-                      _handleVerifyCodeLogin();
-                    }
-                  },
-                  decoration: InputDecoration(
-                    hintText: l10n.translate('verify_code'),
-                    hintStyle: TextStyle(
-                      color: Color(0xFFCCCCCC),
-                      fontSize: 14,
-                    ),
-                    border: InputBorder.none,
-                    isDense: true,
-                    contentPadding: EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 11,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(width: 12),
-            TextButton(
-              onPressed: _isCountingDown ? null : _sendVerifyCode,
-              style: TextButton.styleFrom(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 11,
-                ),
-                minimumSize: const Size(0, 42),
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                disabledForegroundColor: const Color(0xFF999999),
-              ),
-              child: Text(
-                _isCountingDown 
-                    ? '$_countdown${l10n.translate('resend_after')}' 
-                    : l10n.translate('get_verify_code'),
-                style: TextStyle(
-                  fontSize: 14,
-                  color: _isCountingDown
-                      ? const Color(0xFF999999)
-                      : const Color(0xFF4A90E2),
-                ),
-              ),
-            ),
-          ],
         ),
       ],
     );
@@ -991,11 +638,7 @@ class _LoginPageState extends State<LoginPage> {
       child: ElevatedButton(
         onPressed: (_canLogin && !_isLoading)
             ? () {
-                if (_selectedTabIndex == 0) {
-                  _handleAccountLogin();
-                } else {
-                  _handleVerifyCodeLogin();
-                }
+                _handleAccountLogin();
               }
             : null,
         style: ButtonStyle(

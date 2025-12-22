@@ -32,7 +32,6 @@ type FavoriteContactDetail struct {
 	Status        string    `json:"status"`
 	Department    *string   `json:"department,omitempty"`
 	Position      *string   `json:"position,omitempty"`
-	Phone         *string   `json:"phone,omitempty"`
 	Email         *string   `json:"email,omitempty"`
 	CreatedAt     time.Time `json:"created_at"`
 }
@@ -113,7 +112,6 @@ func (r *FavoriteCommonRepository) GetFavoriteContacts(userID int) ([]FavoriteCo
 			u.status,
 			u.department,
 			u.position,
-			u.phone,
 			u.email,
 			fc.created_at
 		FROM favorite_contacts fc
@@ -141,7 +139,6 @@ func (r *FavoriteCommonRepository) GetFavoriteContacts(userID int) ([]FavoriteCo
 			&contact.Status,
 			&contact.Department,
 			&contact.Position,
-			&contact.Phone,
 			&contact.Email,
 			&contact.CreatedAt,
 		)

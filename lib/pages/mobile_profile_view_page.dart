@@ -250,12 +250,10 @@ class _MobileProfileViewPageState extends State<MobileProfileViewPage> {
         children: [
           _buildInfoItem('账号', widget.username),
           _buildInfoItem('性别', _convertGenderToChinese(_currentGender)),
-          _buildInfoItem('手机', _currentPhone),
           _buildEmailItem(), // 使用专门的邮箱组件
           _buildInfoItem('部门', _currentDepartment),
           _buildInfoItem('职位', _currentPosition),
           _buildInfoItem('地区', _currentRegion),
-          _buildInviteCodeItem(),
         ],
       ),
     );
