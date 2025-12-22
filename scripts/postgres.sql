@@ -22,12 +22,11 @@ sudo systemctl restart postgresql
 net stop postgresql-x64-15
 net start postgresql-x64-15
 
-
 # 加强用户密码强度
 ALTER USER youdu_user WITH PASSWORD '';
 [System.Environment]::SetEnvironmentVariable('PASSWORD2', 'C:\go\workspace', 'User')
 export PASSWORD2=''
-
+export GOOGLE_AUTH=''
 
 # 备份和恢复
 psql -U postgres -h 127.0.0.1 -p 5432

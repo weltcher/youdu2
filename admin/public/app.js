@@ -1,6 +1,8 @@
 // 自动判断 API 路径：如果当前路径包含 /admin，则使用 /admin/api，否则使用 /api
 const API_BASE = window.location.pathname.startsWith('/admin') ? '/admin/api' : '/api';
 let token = localStorage.getItem('admin_token');
+let tempToken = null; // 2FA 临时 token
+let lastLoginAt = localStorage.getItem('admin_last_login'); // 最近登录时间
 let currentPage = 'users';
 
 const api = async (url, options = {}) => {
@@ -10,13 +12,20 @@ const api = async (url, options = {}) => {
   return res.json();
 };
 
-const logout = () => { token = null; localStorage.removeItem('admin_token'); render(); };
+const logout = () => { token = null; tempToken = null; lastLoginAt = null; localStorage.removeItem('admin_token'); localStorage.removeItem('admin_last_login'); render(); };
 
 const render = () => {
   const app = document.getElementById('app');
+  if (tempToken) { app.innerHTML = render2FA(); return; }
   if (!token) { app.innerHTML = renderLogin(); return; }
+  let lastLoginText = '';
+  if (lastLoginAt) {
+    const date = new Date(lastLoginAt);
+    date.setHours(date.getHours() + 8); // 增加8小时
+    lastLoginText = `上次登录: ${date.toLocaleString()}`;
+  }
   app.innerHTML = `
-    <div class="sidebar">
+    <div class="sidebar d-flex flex-column">
       <div class="p-3 text-white"><h5>YouDu 管理后台</h5></div>
       <nav class="nav flex-column">
         <a class="nav-link ${currentPage === 'users' ? 'active' : ''}" href="#" onclick="showPage('users')"><i class="bi bi-people me-2"></i>用户管理</a>
@@ -24,6 +33,7 @@ const render = () => {
         <a class="nav-link ${currentPage === 'inviteCodes' ? 'active' : ''}" href="#" onclick="showPage('inviteCodes')"><i class="bi bi-ticket me-2"></i>邀请码管理</a>
         <a class="nav-link" href="#" onclick="logout()"><i class="bi bi-box-arrow-right me-2"></i>退出登录</a>
       </nav>
+      <div class="mt-auto p-3 text-light small" style="opacity:0.7">${lastLoginText || '首次登录'}</div>
     </div>
     <div class="main-content"><div id="page-content"></div></div>`;
   loadPage();
@@ -42,10 +52,27 @@ const renderLogin = () => `
   <div class="login-container">
     <div class="card p-4">
       <h4 class="text-center mb-4">有度管理系统</h4>
-      <form onsubmit="handleLogin(event)">
-        <div class="mb-3"><input type="text" class="form-control" id="username" placeholder="用户名" required></div>
-        <div class="mb-3"><input type="password" class="form-control" id="password" placeholder="密码" required></div>
+      <form onsubmit="handleLogin(event)" autocomplete="off">
+        <div class="mb-3"><input type="text" class="form-control" id="username" placeholder="用户名" required autocomplete="new-password"></div>
+        <div class="mb-3"><input type="password" class="form-control" id="password" placeholder="密码" required autocomplete="new-password"></div>
         <button type="submit" class="btn btn-primary w-100">登录</button>
+      </form>
+    </div>
+  </div>`;
+
+const render2FA = () => `
+  <div class="login-container">
+    <div class="card p-4">
+      <h4 class="text-center mb-4">两步验证</h4>
+      <p class="text-center text-muted mb-3">请输入 Google Authenticator 中的 6 位验证码</p>
+      <form onsubmit="handle2FA(event)" autocomplete="off">
+        <div class="mb-3">
+          <input type="text" class="form-control text-center" id="totpCode" placeholder="000000" 
+            maxlength="6" pattern="[0-9]{6}" required autocomplete="off"
+            style="font-size: 24px; letter-spacing: 8px;">
+        </div>
+        <button type="submit" class="btn btn-primary w-100">验证</button>
+        <button type="button" class="btn btn-link w-100 mt-2" onclick="cancelLogin()">返回登录</button>
       </form>
     </div>
   </div>`;
@@ -53,9 +80,60 @@ const renderLogin = () => `
 const handleLogin = async (e) => {
   e.preventDefault();
   try {
-    const res = await api('/auth/login', { method: 'POST', body: JSON.stringify({ username: document.getElementById('username').value, password: document.getElementById('password').value }) });
-    token = res.token; localStorage.setItem('admin_token', token); render();
+    const res = await fetch(`${API_BASE}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username: document.getElementById('username').value,
+        password: document.getElementById('password').value
+      })
+    }).then(r => r.json());
+    
+    if (res.error) {
+      alert(res.error);
+      return;
+    }
+    
+    if (res.require2FA) {
+      tempToken = res.tempToken;
+      render();
+    } else {
+      token = res.token;
+      localStorage.setItem('admin_token', token);
+      render();
+    }
   } catch { alert('登录失败'); }
+};
+
+const handle2FA = async (e) => {
+  e.preventDefault();
+  try {
+    const res = await fetch(`${API_BASE}/auth/verify-2fa`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        tempToken: tempToken,
+        code: document.getElementById('totpCode').value
+      })
+    }).then(r => r.json());
+    
+    if (res.error) {
+      alert(res.error);
+      return;
+    }
+    
+    token = res.token;
+    tempToken = null;
+    lastLoginAt = res.lastLoginAt;
+    localStorage.setItem('admin_token', token);
+    if (lastLoginAt) localStorage.setItem('admin_last_login', lastLoginAt);
+    render();
+  } catch { alert('验证失败'); }
+};
+
+const cancelLogin = () => {
+  tempToken = null;
+  render();
 };
 
 
