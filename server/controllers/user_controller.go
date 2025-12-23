@@ -501,7 +501,7 @@ func countStatus(statusMap map[int]string, status string) int {
 	return count
 }
 
-// GetUserByInviteCode 根据邀请码获取用户信息
+// GetUserByInviteCode 根据邀请码获取用户信息（从关联表查询）
 func (ctrl *UserController) GetUserByInviteCode(c *gin.Context) {
 	inviteCode := c.Param("invite_code")
 	if inviteCode == "" {
@@ -509,7 +509,7 @@ func (ctrl *UserController) GetUserByInviteCode(c *gin.Context) {
 		return
 	}
 
-	user, err := ctrl.userRepo.FindByInviteCode(inviteCode)
+	user, err := ctrl.userRepo.FindUserByInviteCode(inviteCode)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			utils.BadRequest(c, "用户不存在")

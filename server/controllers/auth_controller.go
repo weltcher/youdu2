@@ -82,40 +82,25 @@ func (ctrl *AuthController) Register(c *gin.Context) {
 		return
 	}
 
-	// 生成唯一邀请码
-	var userInviteCode string
-	for {
-		userInviteCode = utils.GenerateInviteCode()
-		// 检查邀请码是否已存在
-		exists, err := ctrl.userRepo.InviteCodeExists(userInviteCode)
-		if err != nil {
-			utils.LogDebug("检查邀请码失败: %v", err)
-			utils.InternalServerError(c, "服务器错误")
-			return
-		}
-		// 如果不存在，则使用这个邀请码
-		if !exists {
-			break
-		}
-		utils.LogDebug("邀请码 %s 已存在，重新生成", userInviteCode)
-	}
-
-	// 创建用户（传入用户自己的邀请码和注册时使用的邀请码）
-	user, err := ctrl.userRepo.Create(req.Username, req.FullName, hashedPassword, userInviteCode, req.InviteCode)
+	// 创建用户
+	user, err := ctrl.userRepo.Create(req.Username, req.FullName, hashedPassword)
 	if err != nil {
 		utils.LogDebug("创建用户失败: %v", err)
 		utils.InternalServerError(c, "创建用户失败")
 		return
 	}
 
-	// 标记邀请码已使用
+	// 标记邀请码已使用（会在关联表中记录用户使用了哪个邀请码）
 	err = ctrl.userRepo.MarkInviteCodeUsed(req.InviteCode, user.ID, user.Username, req.FullName)
 	if err != nil {
 		utils.LogDebug("标记邀请码已使用失败: %v", err)
 		// 不影响注册流程，继续返回
 	}
 
-	utils.LogDebug("✅ 用户注册成功: username=%s, invite_code=%s, invited_by_code=%s", req.Username, userInviteCode, req.InviteCode)
+	// 设置用户的邀请码（从关联表查询）
+	user.InviteCode = &req.InviteCode
+
+	utils.LogDebug("✅ 用户注册成功: username=%s, invite_code=%s", req.Username, req.InviteCode)
 
 	// 生成token
 	token, err := utils.GenerateToken(user.ID, user.Username)
@@ -191,6 +176,12 @@ func (ctrl *AuthController) Login(c *gin.Context) {
 	} else {
 		// 更新返回的用户对象中的状态
 		user.Status = "online"
+	}
+
+	// 更新最近登录时间
+	err = ctrl.userRepo.UpdateLastLoginAt(user.ID)
+	if err != nil {
+		utils.LogDebug("更新最近登录时间失败: %v", err)
 	}
 
 	utils.Success(c, gin.H{
@@ -412,6 +403,12 @@ func (ctrl *AuthController) VerifyCodeLogin(c *gin.Context) {
 	} else {
 		// 更新返回的用户对象中的状态
 		user.Status = "online"
+	}
+
+	// 更新最近登录时间
+	err = ctrl.userRepo.UpdateLastLoginAt(user.ID)
+	if err != nil {
+		utils.LogDebug("更新最近登录时间失败: %v", err)
 	}
 
 	utils.LogDebug("✅ 验证码登录成功: 用户=%s", user.Username)

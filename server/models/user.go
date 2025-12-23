@@ -7,25 +7,25 @@ import (
 
 // User 用户模型
 type User struct {
-	ID            int       `json:"id"`
-	Username      string    `json:"username"`
-	Password      string    `json:"-"` // 密码不返回到前端
-	Email         *string   `json:"email"`
-	Avatar        string    `json:"avatar"`
-	AuthCode      *string   `json:"auth_code"`
-	FullName      *string   `json:"full_name"`
-	Gender        *string   `json:"gender"`
-	WorkSignature *string   `json:"work_signature"`
-	Status        string    `json:"status"`
-	Landline      *string   `json:"landline"`
-	ShortNumber   *string   `json:"short_number"`
-	Department    *string   `json:"department"`
-	Position      *string   `json:"position"`
-	Region        *string   `json:"region"`
-	InviteCode    *string   `json:"invite_code"`
-	InvitedByCode *string   `json:"invited_by_code"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	ID            int        `json:"id"`
+	Username      string     `json:"username"`
+	Password      string     `json:"-"` // 密码不返回到前端
+	Email         *string    `json:"email"`
+	Avatar        string     `json:"avatar"`
+	AuthCode      *string    `json:"auth_code"`
+	FullName      *string    `json:"full_name"`
+	Gender        *string    `json:"gender"`
+	WorkSignature *string    `json:"work_signature"`
+	Status        string     `json:"status"`
+	Landline      *string    `json:"landline"`
+	ShortNumber   *string    `json:"short_number"`
+	Department    *string    `json:"department"`
+	Position      *string    `json:"position"`
+	Region        *string    `json:"region"`
+	InviteCode    *string    `json:"invite_code"`    // 用户注册时使用的邀请码（从关联表查询）
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
+	LastLoginAt   *time.Time `json:"last_login_at"`
 }
 
 // RegisterRequest 注册请求
@@ -66,18 +66,18 @@ func NewUserRepository(db *sql.DB) *UserRepository {
 	return &UserRepository{DB: db}
 }
 
-// Create 创建用户
-func (r *UserRepository) Create(username, fullName, password, inviteCode, invitedByCode string) (*User, error) {
+// Create 创建用户（不再存储invite_code，改为通过关联表查询）
+func (r *UserRepository) Create(username, fullName, password string) (*User, error) {
 	query := `
-		INSERT INTO users (username, full_name, password, invite_code, invited_by_code, status)
-		VALUES ($1, $2, $3, $4, $5, 'offline')
+		INSERT INTO users (username, full_name, password, status, created_at, updated_at)
+		VALUES ($1, $2, $3, 'offline', NOW() AT TIME ZONE 'UTC', NOW() AT TIME ZONE 'UTC')
 		RETURNING id, username, email, avatar, auth_code, full_name, gender, 
 		          work_signature, status, landline, short_number, department, position, region,
-		          invite_code, invited_by_code, created_at, updated_at
+		          created_at, updated_at, last_login_at
 	`
 
 	user := &User{}
-	err := r.DB.QueryRow(query, username, fullName, password, inviteCode, invitedByCode).Scan(
+	err := r.DB.QueryRow(query, username, fullName, password).Scan(
 		&user.ID,
 		&user.Username,
 		&user.Email,
@@ -92,10 +92,9 @@ func (r *UserRepository) Create(username, fullName, password, inviteCode, invite
 		&user.Department,
 		&user.Position,
 		&user.Region,
-		&user.InviteCode,
-		&user.InvitedByCode,
 		&user.CreatedAt,
 		&user.UpdatedAt,
+		&user.LastLoginAt,
 	)
 
 	if err != nil {
@@ -105,14 +104,16 @@ func (r *UserRepository) Create(username, fullName, password, inviteCode, invite
 	return user, nil
 }
 
-// FindByUsername 根据用户名查找用户
+// FindByUsername 根据用户名查找用户（包含从关联表查询邀请码）
 func (r *UserRepository) FindByUsername(username string) (*User, error) {
 	query := `
-		SELECT id, username, password, email, avatar, auth_code, full_name, gender, 
-		       work_signature, status, landline, short_number, department, position, region,
-		       invite_code, invited_by_code, created_at, updated_at
-		FROM users
-		WHERE username = $1
+		SELECT u.id, u.username, u.password, u.email, u.avatar, u.auth_code, u.full_name, u.gender, 
+		       u.work_signature, u.status, u.landline, u.short_number, u.department, u.position, u.region,
+		       ic.code as invite_code, u.created_at, u.updated_at, u.last_login_at
+		FROM users u
+		LEFT JOIN invite_code_usages icu ON icu.user_id = u.id
+		LEFT JOIN invite_codes ic ON ic.id = icu.invite_code_id
+		WHERE u.username = $1
 	`
 
 	user := &User{}
@@ -133,9 +134,9 @@ func (r *UserRepository) FindByUsername(username string) (*User, error) {
 		&user.Position,
 		&user.Region,
 		&user.InviteCode,
-		&user.InvitedByCode,
 		&user.CreatedAt,
 		&user.UpdatedAt,
+		&user.LastLoginAt,
 	)
 
 	if err != nil {
@@ -145,14 +146,16 @@ func (r *UserRepository) FindByUsername(username string) (*User, error) {
 	return user, nil
 }
 
-// FindByID 根据ID查找用户
+// FindByID 根据ID查找用户（包含从关联表查询邀请码）
 func (r *UserRepository) FindByID(id int) (*User, error) {
 	query := `
-		SELECT id, username, password, email, avatar, auth_code, full_name, gender, 
-		       work_signature, status, landline, short_number, department, position, region,
-		       invite_code, invited_by_code, created_at, updated_at
-		FROM users
-		WHERE id = $1
+		SELECT u.id, u.username, u.password, u.email, u.avatar, u.auth_code, u.full_name, u.gender, 
+		       u.work_signature, u.status, u.landline, u.short_number, u.department, u.position, u.region,
+		       ic.code as invite_code, u.created_at, u.updated_at, u.last_login_at
+		FROM users u
+		LEFT JOIN invite_code_usages icu ON icu.user_id = u.id
+		LEFT JOIN invite_codes ic ON ic.id = icu.invite_code_id
+		WHERE u.id = $1
 	`
 
 	user := &User{}
@@ -173,9 +176,9 @@ func (r *UserRepository) FindByID(id int) (*User, error) {
 		&user.Position,
 		&user.Region,
 		&user.InviteCode,
-		&user.InvitedByCode,
 		&user.CreatedAt,
 		&user.UpdatedAt,
+		&user.LastLoginAt,
 	)
 
 	if err != nil {
@@ -185,14 +188,16 @@ func (r *UserRepository) FindByID(id int) (*User, error) {
 	return user, nil
 }
 
-// FindByAccount 根据账号（用户名/邮箱）查找用户
+// FindByAccount 根据账号（用户名/邮箱）查找用户（包含从关联表查询邀请码）
 func (r *UserRepository) FindByAccount(account string) (*User, error) {
 	query := `
-		SELECT id, username, password, email, avatar, auth_code, full_name, gender, 
-		       work_signature, status, landline, short_number, department, position, region,
-		       invite_code, invited_by_code, created_at, updated_at
-		FROM users
-		WHERE username = $1 OR email = $1
+		SELECT u.id, u.username, u.password, u.email, u.avatar, u.auth_code, u.full_name, u.gender, 
+		       u.work_signature, u.status, u.landline, u.short_number, u.department, u.position, u.region,
+		       ic.code as invite_code, u.created_at, u.updated_at, u.last_login_at
+		FROM users u
+		LEFT JOIN invite_code_usages icu ON icu.user_id = u.id
+		LEFT JOIN invite_codes ic ON ic.id = icu.invite_code_id
+		WHERE u.username = $1 OR u.email = $1
 	`
 
 	user := &User{}
@@ -213,9 +218,9 @@ func (r *UserRepository) FindByAccount(account string) (*User, error) {
 		&user.Position,
 		&user.Region,
 		&user.InviteCode,
-		&user.InvitedByCode,
 		&user.CreatedAt,
 		&user.UpdatedAt,
+		&user.LastLoginAt,
 	)
 
 	if err != nil {
@@ -225,14 +230,93 @@ func (r *UserRepository) FindByAccount(account string) (*User, error) {
 	return user, nil
 }
 
-// FindByInviteCode 根据邀请码查找用户
-func (r *UserRepository) FindByInviteCode(inviteCode string) (*User, error) {
+// InviteCodeStatus 邀请码状态常量
+const (
+	InviteCodeNotFound  = 0 // 邀请码不存在
+	InviteCodeUnused    = 1 // 邀请码可用（还有剩余次数）
+	InviteCodeUsed      = 2 // 邀请码已用完（已使用次数>=总次数）
+)
+
+// CheckInviteCodeStatus 检查邀请码状态（从invite_codes表查询，基于次数判断）
+func (r *UserRepository) CheckInviteCodeStatus(inviteCode string) (int, error) {
+	var totalCount, usedCount int
+	query := `SELECT COALESCE(total_count, 1), COALESCE(used_count, 0) FROM invite_codes WHERE code = $1`
+	err := r.DB.QueryRow(query, inviteCode).Scan(&totalCount, &usedCount)
+	if err != nil {
+		if err.Error() == "sql: no rows in result set" {
+			return InviteCodeNotFound, nil
+		}
+		return InviteCodeNotFound, err
+	}
+	// 如果已使用次数 >= 总次数，则邀请码已用完
+	if usedCount >= totalCount {
+		return InviteCodeUsed, nil
+	}
+	return InviteCodeUnused, nil
+}
+
+// InviteCodeExists 检查邀请码是否存在且还有剩余次数（从invite_codes表查询）
+func (r *UserRepository) InviteCodeExists(inviteCode string) (bool, error) {
+	var count int
+	query := `SELECT COUNT(*) FROM invite_codes WHERE code = $1 AND used_count < total_count`
+	err := r.DB.QueryRow(query, inviteCode).Scan(&count)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+// MarkInviteCodeUsed 标记邀请码已使用（累加已使用次数，并插入使用记录）
+func (r *UserRepository) MarkInviteCodeUsed(inviteCode string, userID int, username string, fullName string) error {
+	// 获取邀请码ID
+	var inviteCodeID int
+	err := r.DB.QueryRow(`SELECT id FROM invite_codes WHERE code = $1`, inviteCode).Scan(&inviteCodeID)
+	if err != nil {
+		return err
+	}
+
+	// 插入使用记录到关联表
+	_, err = r.DB.Exec(`
+		INSERT INTO invite_code_usages (invite_code_id, user_id, used_at)
+		VALUES ($1, $2, NOW())
+		ON CONFLICT (invite_code_id, user_id) DO NOTHING
+	`, inviteCodeID, userID)
+	if err != nil {
+		return err
+	}
+
+	// 更新邀请码的使用次数和状态
 	query := `
-		SELECT id, username, password, email, avatar, auth_code, full_name, gender, 
-		       work_signature, status, landline, short_number, department, position, region,
-		       invite_code, invited_by_code, created_at, updated_at
-		FROM users
-		WHERE invite_code = $1
+		UPDATE invite_codes 
+		SET used_count = used_count + 1,
+		    status = CASE WHEN used_count + 1 >= total_count THEN 'used' ELSE 'unused' END
+		WHERE code = $1 AND used_count < total_count
+	`
+	result, err := r.DB.Exec(query, inviteCode)
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return sql.ErrNoRows // 邀请码不存在或已用完
+	}
+	return nil
+}
+
+// FindUserByInviteCode 根据邀请码查找使用该邀请码注册的用户（从关联表查询）
+func (r *UserRepository) FindUserByInviteCode(inviteCode string) (*User, error) {
+	query := `
+		SELECT u.id, u.username, u.password, u.email, u.avatar, u.auth_code, u.full_name, u.gender, 
+		       u.work_signature, u.status, u.landline, u.short_number, u.department, u.position, u.region,
+		       ic.code as invite_code, u.created_at, u.updated_at, u.last_login_at
+		FROM users u
+		JOIN invite_code_usages icu ON icu.user_id = u.id
+		JOIN invite_codes ic ON ic.id = icu.invite_code_id
+		WHERE ic.code = $1
+		LIMIT 1
 	`
 
 	user := &User{}
@@ -253,9 +337,9 @@ func (r *UserRepository) FindByInviteCode(inviteCode string) (*User, error) {
 		&user.Position,
 		&user.Region,
 		&user.InviteCode,
-		&user.InvitedByCode,
 		&user.CreatedAt,
 		&user.UpdatedAt,
+		&user.LastLoginAt,
 	)
 
 	if err != nil {
@@ -263,52 +347,6 @@ func (r *UserRepository) FindByInviteCode(inviteCode string) (*User, error) {
 	}
 
 	return user, nil
-}
-
-// InviteCodeStatus 邀请码状态常量
-const (
-	InviteCodeNotFound = 0 // 邀请码不存在
-	InviteCodeUnused   = 1 // 邀请码未使用
-	InviteCodeUsed     = 2 // 邀请码已使用
-)
-
-// CheckInviteCodeStatus 检查邀请码状态（从invite_codes表查询）
-func (r *UserRepository) CheckInviteCodeStatus(inviteCode string) (int, error) {
-	var status string
-	query := `SELECT status FROM invite_codes WHERE code = $1`
-	err := r.DB.QueryRow(query, inviteCode).Scan(&status)
-	if err != nil {
-		if err.Error() == "sql: no rows in result set" {
-			return InviteCodeNotFound, nil
-		}
-		return InviteCodeNotFound, err
-	}
-	if status == "used" {
-		return InviteCodeUsed, nil
-	}
-	return InviteCodeUnused, nil
-}
-
-// InviteCodeExists 检查邀请码是否存在且未使用（从invite_codes表查询）
-func (r *UserRepository) InviteCodeExists(inviteCode string) (bool, error) {
-	var count int
-	query := `SELECT COUNT(*) FROM invite_codes WHERE code = $1 AND status = 'unused'`
-	err := r.DB.QueryRow(query, inviteCode).Scan(&count)
-	if err != nil {
-		return false, err
-	}
-	return count > 0, nil
-}
-
-// MarkInviteCodeUsed 标记邀请码已使用
-func (r *UserRepository) MarkInviteCodeUsed(inviteCode string, userID int, username string, fullName string) error {
-	query := `
-		UPDATE invite_codes 
-		SET status = 'used', used_by_user_id = $1, used_by_username = $2, used_by_fullname = $3, used_at = NOW()
-		WHERE code = $4 AND status = 'unused'
-	`
-	_, err := r.DB.Exec(query, userID, username, fullName, inviteCode)
-	return err
 }
 
 // UpdatePassword 更新密码（通过用户名）
@@ -371,6 +409,18 @@ func (r *UserRepository) UpdateStatus(id int, status string) error {
 	return err
 }
 
+// UpdateLastLoginAt 更新最近登录时间（使用UTC时间）
+func (r *UserRepository) UpdateLastLoginAt(id int) error {
+	query := `
+		UPDATE users
+		SET last_login_at = NOW() AT TIME ZONE 'UTC'
+		WHERE id = $1
+	`
+
+	_, err := r.DB.Exec(query, id)
+	return err
+}
+
 // UpdateProfileRequest 更新个人信息请求
 type UpdateProfileRequest struct {
 	FullName    *string `json:"full_name"`
@@ -412,14 +462,16 @@ func (r *UserRepository) UpdateProfile(id int, req UpdateProfileRequest) error {
 	return err
 }
 
-// FindByEmail 根据邮箱查找用户
+// FindByEmail 根据邮箱查找用户（包含从关联表查询邀请码）
 func (r *UserRepository) FindByEmail(email string) (*User, error) {
 	query := `
-		SELECT id, username, password, email, avatar, auth_code, full_name, gender, 
-		       work_signature, status, landline, short_number, department, position, region,
-		       invite_code, invited_by_code, created_at, updated_at
-		FROM users
-		WHERE email = $1
+		SELECT u.id, u.username, u.password, u.email, u.avatar, u.auth_code, u.full_name, u.gender, 
+		       u.work_signature, u.status, u.landline, u.short_number, u.department, u.position, u.region,
+		       ic.code as invite_code, u.created_at, u.updated_at, u.last_login_at
+		FROM users u
+		LEFT JOIN invite_code_usages icu ON icu.user_id = u.id
+		LEFT JOIN invite_codes ic ON ic.id = icu.invite_code_id
+		WHERE u.email = $1
 	`
 
 	user := &User{}
@@ -440,9 +492,9 @@ func (r *UserRepository) FindByEmail(email string) (*User, error) {
 		&user.Position,
 		&user.Region,
 		&user.InviteCode,
-		&user.InvitedByCode,
 		&user.CreatedAt,
 		&user.UpdatedAt,
+		&user.LastLoginAt,
 	)
 
 	if err != nil {

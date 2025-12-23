@@ -10,7 +10,9 @@ router.use(authMiddleware);
 router.get('/', async (req: AuthRequest, res: Response) => {
   const page = parseInt(req.query.page as string) || 1;
   const limit = parseInt(req.query.limit as string) || 20;
-  const search = req.query.search as string || '';
+  const username = req.query.username as string || '';
+  const fullName = req.query.full_name as string || '';
+  const email = req.query.email as string || '';
   const status = req.query.status as string;
   const offset = (page - 1) * limit;
 
@@ -18,9 +20,21 @@ router.get('/', async (req: AuthRequest, res: Response) => {
   const params: any[] = [];
   let paramIndex = 1;
 
-  if (search) {
-    whereClause += ` AND (username ILIKE $${paramIndex} OR full_name ILIKE $${paramIndex} OR phone ILIKE $${paramIndex})`;
-    params.push(`%${search}%`);
+  if (username) {
+    whereClause += ` AND username ILIKE $${paramIndex}`;
+    params.push(`%${username}%`);
+    paramIndex++;
+  }
+
+  if (fullName) {
+    whereClause += ` AND full_name ILIKE $${paramIndex}`;
+    params.push(`%${fullName}%`);
+    paramIndex++;
+  }
+
+  if (email) {
+    whereClause += ` AND email ILIKE $${paramIndex}`;
+    params.push(`%${email}%`);
     paramIndex++;
   }
 
@@ -35,7 +49,7 @@ router.get('/', async (req: AuthRequest, res: Response) => {
 
   params.push(limit, offset);
   const result = await pool.query(
-    `SELECT id, username, phone, email, avatar, full_name, gender, status, department, position, created_at, updated_at
+    `SELECT id, username, email, avatar, full_name, gender, status, department, position, remark, created_at, last_login_at, updated_at
      FROM users ${whereClause} ORDER BY id DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`,
     params
   );
@@ -47,9 +61,12 @@ router.get('/', async (req: AuthRequest, res: Response) => {
 router.get('/:id', async (req: AuthRequest, res: Response) => {
   const { id } = req.params;
   const result = await pool.query(
-    `SELECT id, username, phone, email, avatar, full_name, gender, work_signature, status, 
-            landline, short_number, department, position, region, invite_code, invited_by_code, created_at, updated_at
-     FROM users WHERE id = $1`,
+    `SELECT u.id, u.username, u.phone, u.email, u.avatar, u.full_name, u.gender, u.work_signature, u.status, 
+            u.landline, u.short_number, u.department, u.position, u.region, u.remark, ic.code as invite_code, u.created_at, u.last_login_at, u.updated_at
+     FROM users u
+     LEFT JOIN invite_code_usages icu ON icu.user_id = u.id
+     LEFT JOIN invite_codes ic ON ic.id = icu.invite_code_id
+     WHERE u.id = $1`,
     [id]
   );
   if (result.rows.length === 0) {
@@ -60,7 +77,7 @@ router.get('/:id', async (req: AuthRequest, res: Response) => {
 
 // 新增用户
 router.post('/', async (req: AuthRequest, res: Response) => {
-  const { username, password, full_name, phone, email, gender, department, position } = req.body;
+  const { username, password, full_name, phone, email, gender, department, position, remark } = req.body;
   
   if (!username || !password || !full_name) {
     return res.status(400).json({ error: '用户名、密码和姓名为必填项' });
@@ -70,9 +87,9 @@ router.post('/', async (req: AuthRequest, res: Response) => {
   
   try {
     const result = await pool.query(
-      `INSERT INTO users (username, password, full_name, phone, email, gender, department, position, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'offline') RETURNING id`,
-      [username, hashedPassword, full_name, phone || null, email || null, gender || null, department || null, position || null]
+      `INSERT INTO users (username, password, full_name, phone, email, gender, department, position, remark, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'offline') RETURNING id`,
+      [username, hashedPassword, full_name, phone || null, email || null, gender || null, department || null, position || null, remark || null]
     );
     res.json({ id: result.rows[0].id, message: '用户创建成功' });
   } catch (err: any) {
@@ -86,14 +103,14 @@ router.post('/', async (req: AuthRequest, res: Response) => {
 // 更新用户
 router.put('/:id', async (req: AuthRequest, res: Response) => {
   const { id } = req.params;
-  const { full_name, phone, email, gender, department, position, region } = req.body;
+  const { full_name, phone, email, gender, department, position, region, remark } = req.body;
 
   await pool.query(
     `UPDATE users SET full_name = COALESCE($1, full_name), phone = COALESCE($2, phone), 
      email = COALESCE($3, email), gender = COALESCE($4, gender), department = COALESCE($5, department),
-     position = COALESCE($6, position), region = COALESCE($7, region), updated_at = NOW()
-     WHERE id = $8`,
-    [full_name, phone, email, gender, department, position, region, id]
+     position = COALESCE($6, position), region = COALESCE($7, region), remark = $8, updated_at = NOW()
+     WHERE id = $9`,
+    [full_name, phone, email, gender, department, position, region, remark || null, id]
   );
   res.json({ message: '用户更新成功' });
 });
