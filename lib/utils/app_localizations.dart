@@ -104,7 +104,7 @@ class AppLocalizations {
       'version_value': '10.0.12-2025102401',
       'copy': '复制',
       'check_update': '检查新版本',
-      'copyright': 'Copyright (c) 2014-2025 youdu.cn All rights reserved',
+      'copyright': 'Copyright (c) 2014-2025 有度.com All rights reserved',
 
       // 语言选项
       'chinese_simplified': '简体中文',
@@ -320,7 +320,7 @@ class AppLocalizations {
       'version_value': '10.0.12-2025102401',
       'copy': 'Copy',
       'check_update': 'Check for Updates',
-      'copyright': 'Copyright (c) 2014-2025 youdu.cn All rights reserved',
+      'copyright': 'Copyright (c) 2014-2025 有度.com All rights reserved',
 
       // 语言选项
       'chinese_simplified': '简体中文',
@@ -536,7 +536,7 @@ class AppLocalizations {
       'version_value': '10.0.12-2025102401',
       'copy': '複製',
       'check_update': '檢查新版本',
-      'copyright': 'Copyright (c) 2014-2025 youdu.cn All rights reserved',
+      'copyright': 'Copyright (c) 2014-2025 有度.com All rights reserved',
 
       // 语言选项
       'chinese_simplified': '简体中文',

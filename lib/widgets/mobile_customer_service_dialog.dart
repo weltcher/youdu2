@@ -54,7 +54,7 @@ class MobileCustomerServiceDialog extends StatelessWidget {
                     icon: Icons.email,
                     iconColor: const Color(0xFF4A90E2),
                     title: '客服邮箱',
-                    content: 'youdu.support@xindatech.cn',
+                    content: 'kf@youduchat.com',
                     onTap: () {
                       // 可以添加发送邮件的功能
                     },
@@ -64,7 +64,7 @@ class MobileCustomerServiceDialog extends StatelessWidget {
                     icon: Icons.language,
                     iconColor: const Color(0xFFFAAD14),
                     title: '官方网站',
-                    content: 'https://youdu.cn/',
+                    content: 'https://有度.com/',
                     onTap: () {
                       // 可以添加打开网址的功能
                     },

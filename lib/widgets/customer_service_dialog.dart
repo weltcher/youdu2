@@ -52,7 +52,7 @@ class CustomerServiceDialog extends StatelessWidget {
                           icon: Icons.email,
                           iconColor: const Color(0xFF4A90E2),
                           label: '邮箱：',
-                          content: 'youdu.support@xindatech.cn',
+                          content: 'kf@youduchat.com',
                         ),
                         const SizedBox(height: 24),
                         // 官网
@@ -60,7 +60,7 @@ class CustomerServiceDialog extends StatelessWidget {
                           icon: Icons.language,
                           iconColor: const Color(0xFF4A90E2),
                           label: '官网：',
-                          content: 'https://youdu.cn/',
+                          content: 'https://有度.com/',
                           isLink: true,
                         ),
                       ],
