@@ -21,6 +21,10 @@ class MobileCreateGroupPage extends StatefulWidget {
   /// 参数: groupId, newDoNotDisturbValue
   static void Function(int groupId, bool doNotDisturb)? onDoNotDisturbChanged;
 
+  /// 静态回调：当群组信息更新后调用（包括头像、名称等）
+  /// 参数: groupId, groupData (包含 name, avatar 等字段)
+  static void Function(int groupId, Map<String, dynamic> groupData)? onGroupInfoChanged;
+
   const MobileCreateGroupPage({
     Key? key,
     this.contacts,
@@ -447,6 +451,14 @@ class _MobileCreateGroupPageState extends State<MobileCreateGroupPage> {
               _currentAvatarUrl = avatarUrl;
             });
             
+            // 🔴 通知会话列表更新群组头像
+            if (MobileCreateGroupPage.onGroupInfoChanged != null) {
+              MobileCreateGroupPage.onGroupInfoChanged!(widget.groupId!, {
+                'avatar': avatarUrl,
+              });
+              logger.debug('📢 已通知会话列表更新群组头像 - groupId: ${widget.groupId}, avatar: $avatarUrl');
+            }
+            
             if (mounted) {
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(content: Text('头像更新成功')),
@@ -528,6 +540,15 @@ class _MobileCreateGroupPageState extends State<MobileCreateGroupPage> {
 
         if (response['code'] == 0) {
           logger.debug('✅ 保存成功');
+          
+          // 🔴 通知会话列表更新群组信息（名称等）
+          if (canEditGroupInfo && MobileCreateGroupPage.onGroupInfoChanged != null) {
+            MobileCreateGroupPage.onGroupInfoChanged!(widget.groupId!, {
+              'name': groupName,
+            });
+            logger.debug('📢 已通知会话列表更新群组名称 - groupId: ${widget.groupId}, name: $groupName');
+          }
+          
           if (mounted) {
             ScaffoldMessenger.of(
               context,

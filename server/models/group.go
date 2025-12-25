@@ -58,6 +58,7 @@ type GroupMessage struct {
 	VoiceDuration        *int      `json:"voice_duration,omitempty" db:"voice_duration"`         // 语音消息时长（秒）
 	Status               string    `json:"status" db:"status"`
 	DeletedByUsers       string    `json:"deleted_by_users" db:"deleted_by_users"` // 已删除该消息的用户ID列表（逗号分隔）
+	IsRead               bool      `json:"is_read"`                                // 🔴 当前用户是否已读（不存储在数据库，动态计算）
 	CreatedAt            time.Time `json:"-" db:"created_at"`                      // 🔴 不直接序列化，使用 MarshalJSON 方法
 }
 

@@ -428,6 +428,15 @@ class _MobileHomePageState extends State<MobileHomePage>
           _chatListKey.currentState?.updateSyncStatus(isSyncing, message);
         }
       },
+      // 🔴 关键修复：群组同步完成后，将群组添加到已读缓存
+      onGroupsSynced: (groupIds) {
+        logger.debug('📥 [群组同步回调] 收到 ${groupIds.length} 个群组ID，添加到已读缓存');
+        for (final groupId in groupIds) {
+          final key = 'group_$groupId';
+          MobileHomePage._readStatusCache.add(key);
+        }
+        logger.debug('📥 [群组同步回调] 已读缓存更新完成，当前缓存数: ${MobileHomePage._readStatusCache.length}');
+      },
     );
     logger.debug('✅ MobileHomePage _initializeData - 应用初始化服务完成');
 
@@ -1224,6 +1233,11 @@ class _MobileHomePageState extends State<MobileHomePage>
             logger.debug('🔔 收到头像更新通知，准备处理');
             _handleAvatarUpdated(data['data']);
             break;
+          case 'group_info_updated':
+            // 处理群组信息更新通知（包括群组头像）
+            logger.debug('📢 收到群组信息更新通知，准备处理');
+            _handleGroupInfoUpdated(data['data']);
+            break;
           case 'group_nickname_updated':
             // 处理群组昵称更新通知
             logger.debug('👤 收到群组昵称更新通知，准备处理');
@@ -1495,6 +1509,36 @@ class _MobileHomePageState extends State<MobileHomePage>
       logger.debug('🎭 移动端头像更新处理完成（数据库+会话列表）');
     } catch (e) {
       logger.debug('移动端处理头像更新失败: $e');
+    }
+  }
+
+  // 处理群组信息更新通知（包括群组头像）
+  Future<void> _handleGroupInfoUpdated(dynamic data) async {
+    try {
+      if (data == null) {
+        logger.debug('⚠️ 群组信息更新数据为空');
+        return;
+      }
+
+      final groupId = data['group_id'] as int?;
+      final groupData = data['group'] as Map<String, dynamic>?;
+
+      if (groupId == null || groupData == null) {
+        logger.debug('⚠️ 群组信息更新消息缺少必要字段');
+        return;
+      }
+
+      logger.debug('📢 移动端收到群组信息更新通知 - 群组ID: $groupId, 数据: $groupData');
+
+      // 通知聊天列表页面更新群组信息
+      final chatListState = _chatListKey.currentState;
+      if (chatListState != null && chatListState.mounted) {
+        await chatListState._handleGroupInfoUpdated(groupId, groupData);
+      }
+
+      logger.debug('📢 移动端群组信息更新处理完成');
+    } catch (e) {
+      logger.debug('移动端处理群组信息更新失败: $e');
     }
   }
 
@@ -3795,6 +3839,9 @@ class _MobileChatListPageState extends State<MobileChatListPage> {
 
     // 设置群组 doNotDisturb 更新回调
     MobileCreateGroupPage.onDoNotDisturbChanged = _updateGroupDoNotDisturb;
+    
+    // 设置群组信息更新回调（包括头像、名称等）
+    MobileCreateGroupPage.onGroupInfoChanged = _updateGroupInfo;
   }
 
   // 加载用户偏好设置
@@ -3823,6 +3870,7 @@ class _MobileChatListPageState extends State<MobileChatListPage> {
     _searchController.dispose();
     // 清理回调
     MobileCreateGroupPage.onDoNotDisturbChanged = null;
+    MobileCreateGroupPage.onGroupInfoChanged = null;
     super.dispose();
   }
 
@@ -3942,6 +3990,36 @@ class _MobileChatListPageState extends State<MobileChatListPage> {
         final updatedContact = oldContact.copyWith(doNotDisturb: doNotDisturb);
         _recentContacts[contactIndex] = updatedContact;
         logger.debug('✅ 已更新群组 $groupId 在最近联系人列表中的 doNotDisturb 状态');
+        
+        // 🔴 更新缓存
+        MobileHomePage._cachedContacts = List.from(_recentContacts);
+        MobileHomePage._cacheTimestamp = DateTime.now();
+      });
+    } else {
+      logger.debug('⚠️ 群组 $groupId 不在最近联系人列表中');
+    }
+  }
+
+  // 🔴 新增：更新群组信息（包括头像、名称等）
+  void _updateGroupInfo(int groupId, Map<String, dynamic> groupData) {
+    logger.debug('📢 收到群组 $groupId 的信息更新通知: $groupData');
+
+    // 在 _recentContacts 列表中找到对应的群组并更新
+    final contactIndex = _recentContacts.indexWhere(
+      (contact) => contact.isGroup && contact.groupId == groupId,
+    );
+
+    if (contactIndex != -1) {
+      setState(() {
+        final oldContact = _recentContacts[contactIndex];
+        final updatedContact = oldContact.copyWith(
+          username: groupData['name'] as String? ?? oldContact.username,
+          fullName: groupData['name'] as String? ?? oldContact.fullName,
+          avatar: groupData['avatar'] as String? ?? oldContact.avatar,
+          groupName: groupData['name'] as String? ?? oldContact.groupName,
+        );
+        _recentContacts[contactIndex] = updatedContact;
+        logger.debug('✅ 已更新群组 $groupId 在最近联系人列表中的信息');
         
         // 🔴 更新缓存
         MobileHomePage._cachedContacts = List.from(_recentContacts);
@@ -4390,22 +4468,40 @@ class _MobileChatListPageState extends State<MobileChatListPage> {
       if (contactIndex != -1 && mounted) {
         // 会话已在列表中
         if (lastMessage != null && lastMessageTime != null) {
-          // 🔴 修复：有最新消息时，只更新会话内容，不移动位置
-          // 只有在收到新消息时才会移动会话到顶部（在_handleNewMessage和_handleGroupMessage中处理）
+          // 🔴 修复：退出聊天页面时，更新会话内容和时间，并将会话移到前面
+          // 因为用户发送的消息也是最新消息，应该更新排序
           // 🔴 关键修复：退出聊天页面时，将未读数设置为0（因为用户已经阅读了消息）
           setState(() {
             final contact = _recentContacts[contactIndex];
             final updatedContact = contact.copyWith(
               lastMessage: lastMessage,
-              lastMessageTime: lastMessageTime,
+              lastMessageTime: lastMessageTime, // 🔴 更新lastMessageTime，确保排序正确
               unreadCount: 0, // 🔴 关键：退出聊天页面时清除未读数
               hasMentionedMe: false, // 🔴 同时清除@提醒状态
             );
             
-            // 直接在原位置更新，不移动位置
-            _recentContacts[contactIndex] = updatedContact;
+            // 🔴 移除旧的联系人
+            _recentContacts.removeAt(contactIndex);
             
-            logger.debug('✅ 已更新会话内容并清除未读数，保持原位置: "$lastMessage"');
+            // 🔴 找到第一个非顶置联系人的位置（插入到顶置联系人之下）
+            int targetIndex = 0;
+            for (int i = 0; i < _recentContacts.length; i++) {
+              final c = _recentContacts[i];
+              final key = Storage.generateContactKey(
+                isGroup: c.isGroup,
+                id: c.isGroup ? (c.groupId ?? c.userId) : c.userId,
+              );
+              if (!_pinnedChats.containsKey(key)) {
+                targetIndex = i;
+                break;
+              }
+              targetIndex = i + 1; // 如果所有都是置顶的，插入到最后
+            }
+            
+            // 🔴 插入到目标位置
+            _recentContacts.insert(targetIndex, updatedContact);
+            
+            logger.debug('✅ 已更新会话内容并清除未读数，移动到位置 $targetIndex: "$lastMessage"');
           });
           
           // 🔴 关键修复：同时更新数据库中的已读状态
@@ -4418,11 +4514,13 @@ class _MobileChatListPageState extends State<MobileChatListPage> {
           }
         } else {
           // 🔴 没有最新消息（清空聊天记录后），保留会话但将最新消息置空
+          // 🔴 关键修复：不更新lastMessageTime，保持原来的时间，避免排序位置变化
           setState(() {
             final contact = _recentContacts[contactIndex];
             final updatedContact = contact.copyWith(
               lastMessage: '', // 最新消息置空
-              lastMessageTime: DateTime.now().toIso8601String(), // 更新时间为当前时间
+              // 🔴 不更新lastMessageTime，保持原来的时间
+              // lastMessageTime: DateTime.now().toIso8601String(),
               unreadCount: 0, // 🔴 关键：同样清除未读数
               hasMentionedMe: false, // 🔴 同时清除@提醒状态
             );
@@ -4443,17 +4541,14 @@ class _MobileChatListPageState extends State<MobileChatListPage> {
           }
         }
         
-        // 🔴 修复：重新排序会话列表（因为置顶状态可能已改变）
-        // 使用_filteredContacts getter来获取排序后的列表
-        final sortedContacts = _filteredContacts;
-        setState(() {
-          _recentContacts = sortedContacts;
-        });
+        // 🔴 修复：退出聊天页面时重新排序整个列表
+        // 会话位置会根据最新消息时间更新
+        // 置顶状态的变化会在下次 UI 渲染时通过 _filteredContacts getter 自动处理
         
         // 更新缓存
         MobileHomePage._cachedContacts = List.from(_recentContacts);
         MobileHomePage._cacheTimestamp = DateTime.now();
-        logger.debug('💾 缓存已更新，会话列表已重新排序');
+        logger.debug('💾 缓存已更新，会话已移动到正确位置');
       } else if (lastMessage != null && lastMessageTime != null) {
         // 🔴 会话不在列表中且有新消息，重新加载整个列表（确保新会话能显示）
         logger.debug('💡 会话不在列表中，重新加载联系人列表以显示新会话');
@@ -4503,6 +4598,45 @@ class _MobileChatListPageState extends State<MobileChatListPage> {
       logger.debug('🎭 移动端聊天列表头像更新处理完成（内存+数据库）');
     } catch (e) {
       logger.debug('移动端聊天列表处理头像更新失败: $e');
+    }
+  }
+
+  // 处理群组信息更新通知（包括群组头像）
+  Future<void> _handleGroupInfoUpdated(int groupId, Map<String, dynamic> groupData) async {
+    try {
+      logger.debug('📢 移动端聊天列表收到群组信息更新通知 - 群组ID: $groupId, 数据: $groupData');
+
+      // 1. 立即更新内存中的会话列表
+      bool updated = false;
+      for (int i = 0; i < _recentContacts.length; i++) {
+        // 群组会话：isGroup为true，且groupId匹配
+        if (_recentContacts[i].isGroup && _recentContacts[i].groupId == groupId) {
+          setState(() {
+            _recentContacts[i] = _recentContacts[i].copyWith(
+              username: groupData['name'] as String?,
+              fullName: groupData['name'] as String?,
+              avatar: groupData['avatar'] as String?,
+              groupName: groupData['name'] as String?,
+            );
+          });
+          updated = true;
+          logger.debug('✅ 已更新移动端聊天列表内存中群组 $groupId 的信息');
+          break;
+        }
+      }
+
+      // 2. 更新缓存
+      if (updated) {
+        MobileHomePage._cachedContacts = List.from(_recentContacts);
+        MobileHomePage._cacheTimestamp = DateTime.now();
+        logger.debug('💾 移动端群组信息更新后内存缓存已更新');
+      } else {
+        logger.debug('⚠️ 在移动端聊天列表内存中未找到群组 $groupId');
+      }
+
+      logger.debug('📢 移动端聊天列表群组信息更新处理完成');
+    } catch (e) {
+      logger.debug('移动端聊天列表处理群组信息更新失败: $e');
     }
   }
 

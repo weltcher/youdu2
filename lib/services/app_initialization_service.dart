@@ -8,6 +8,9 @@ import 'local_database_service.dart';
 /// 同步状态回调类型
 typedef SyncStatusCallback = void Function(bool isSyncing, String? message);
 
+/// 🔴 新增：同步完成后的群组ID回调类型
+typedef SyncedGroupsCallback = void Function(List<int> groupIds);
+
 /// 应用初始化服务
 /// 负责应用启动时的各种初始化和修复工作
 class AppInitializationService {
@@ -21,7 +24,11 @@ class AppInitializationService {
 
   /// 执行应用初始化
   /// [onSyncStatusChanged] 同步状态变化回调，用于UI显示加载状态
-  Future<void> initialize({SyncStatusCallback? onSyncStatusChanged}) async {
+  /// [onGroupsSynced] 🔴 新增：群组同步完成回调，用于更新已读缓存
+  Future<void> initialize({
+    SyncStatusCallback? onSyncStatusChanged,
+    SyncedGroupsCallback? onGroupsSynced,
+  }) async {
     try {
       logger.debug('═══════════════════════════════════════════════════════════');
       logger.debug('🚀 [应用初始化] 开始应用初始化...');
@@ -52,10 +59,18 @@ class AppInitializationService {
         // 通知UI开始同步
         onSyncStatusChanged?.call(true, '同步数据中...');
         
-        // 同步历史聊天消息，返回同步的消息数量
+        // 同步历史聊天消息，返回同步的消息数量和群组ID列表
         logger.debug('📥 [应用初始化] 开始同步历史聊天消息...');
-        final syncedCount = await _syncHistoryMessages();
-        logger.debug('📥 [应用初始化] 历史消息同步完成，共 $syncedCount 条');
+        final syncResult = await _syncHistoryMessages();
+        final syncedCount = syncResult['count'] as int;
+        final syncedGroupIds = syncResult['groupIds'] as List<int>;
+        logger.debug('📥 [应用初始化] 历史消息同步完成，共 $syncedCount 条，群组数: ${syncedGroupIds.length}');
+        
+        // 🔴 关键修复：通知UI更新已读缓存
+        if (syncedGroupIds.isNotEmpty) {
+          onGroupsSynced?.call(syncedGroupIds);
+          logger.debug('📥 [应用初始化] 已通知UI更新群组已读缓存');
+        }
         
         // 同步收藏数据
         logger.debug('📥 [应用初始化] 开始同步收藏数据...');
@@ -137,8 +152,8 @@ class AppInitializationService {
   }
   
   /// 从服务器同步历史聊天消息
-  /// 返回同步的消息总数
-  Future<int> _syncHistoryMessages() async {
+  /// 返回同步结果：{'count': 消息总数, 'groupIds': 群组ID列表}
+  Future<Map<String, dynamic>> _syncHistoryMessages() async {
     try {
       final token = await Storage.getToken();
       final userId = await Storage.getUserId();
@@ -149,7 +164,7 @@ class AppInitializationService {
       
       if (token == null || userId == null) {
         logger.debug('⚠️ [历史消息同步] 未登录，跳过历史消息同步');
-        return 0;
+        return {'count': 0, 'groupIds': <int>[]};
       }
       
       // 1. 同步私聊历史消息
@@ -159,17 +174,19 @@ class AppInitializationService {
       
       // 2. 同步群聊历史消息
       logger.debug('📥 [历史消息同步] 步骤2: 同步群聊消息...');
-      final groupCount = await _syncGroupMessages(token, userId);
+      final groupResult = await _syncGroupMessages(token, userId);
+      final groupCount = groupResult['count'] as int;
+      final groupIds = groupResult['groupIds'] as List<int>;
       logger.debug('📥 [历史消息同步] 群聊消息同步完成: $groupCount 条');
       
       final totalCount = privateCount + groupCount;
       logger.debug('───────────────────────────────────────────────────────────');
       logger.debug('✅ [历史消息同步] 同步完成! 私聊: $privateCount 条, 群聊: $groupCount 条, 总计: $totalCount 条');
       logger.debug('───────────────────────────────────────────────────────────');
-      return totalCount;
+      return {'count': totalCount, 'groupIds': groupIds};
     } catch (e) {
       logger.debug('❌ [历史消息同步] 同步失败: $e');
-      return 0;
+      return {'count': 0, 'groupIds': <int>[]};
     }
   }
   
@@ -249,8 +266,9 @@ class AppInitializationService {
   }
   
   /// 同步群聊历史消息
-  /// 返回同步的消息数量
-  Future<int> _syncGroupMessages(String token, int userId) async {
+  /// 返回同步结果：{'count': 消息数量, 'groupIds': 群组ID列表}
+  Future<Map<String, dynamic>> _syncGroupMessages(String token, int userId) async {
+    final List<int> syncedGroupIds = []; // 🔴 记录同步的群组ID
     try {
       logger.debug('  ┌─────────────────────────────────────────────────────────');
       logger.debug('  │ 📥 [群聊同步] 开始同步群聊历史消息...');
@@ -263,7 +281,7 @@ class AppInitializationService {
       if (groupsResponse['code'] != 0) {
         logger.debug('  │ ⚠️ [群聊同步] 获取群组列表失败: ${groupsResponse['message']}');
         logger.debug('  └─────────────────────────────────────────────────────────');
-        return 0;
+        return {'count': 0, 'groupIds': <int>[]};
       }
       
       final groups = groupsResponse['data']?['groups'] as List<dynamic>? ?? [];
@@ -276,6 +294,9 @@ class AppInitializationService {
         final groupId = group['id'] as int?;
         final groupName = group['name'] ?? '未知群组';
         if (groupId == null) continue;
+        
+        // 🔴 记录群组ID
+        syncedGroupIds.add(groupId);
         
         // 获取该群组的历史消息
         logger.debug('  │ 📥 [群聊同步] [$groupIndex/${groups.length}] 同步群组: $groupName (ID: $groupId)');
@@ -299,9 +320,23 @@ class AppInitializationService {
           try {
             final messageMap = _convertServerMessageToLocal(msg as Map<String, dynamic>, isGroup: true);
             final id = await _localDb.insertGroupMessage(messageMap, orIgnore: true);
-            if (id > 0) savedCount++;
+            if (id > 0) {
+              savedCount++;
+            }
           } catch (e) {
             logger.debug('  │ ⚠️ [群聊同步] 保存消息失败: $e');
+          }
+        }
+        
+        // 🔴 关键修复：同步完成后，将该群组的所有消息标记为已读
+        // 因为这些是用户之前已经看过的消息（在其他设备上），不应该显示未读气泡
+        // 使用 markGroupMessagesAsRead 方法，它会查询所有未读消息并标记为已读
+        if (messages.isNotEmpty) {
+          try {
+            await _localDb.markGroupMessagesAsRead(groupId, userId);
+            logger.debug('  │ ✅ [群聊同步] 已将群组 $groupId 的所有历史消息标记为已读');
+          } catch (e) {
+            logger.debug('  │ ⚠️ [群聊同步] 标记已读失败: $e');
           }
         }
         
@@ -313,11 +348,11 @@ class AppInitializationService {
       
       logger.debug('  │ ✅ [群聊同步] 完成! 共保存 $totalSavedCount 条群聊消息');
       logger.debug('  └─────────────────────────────────────────────────────────');
-      return totalSavedCount;
+      return {'count': totalSavedCount, 'groupIds': syncedGroupIds};
     } catch (e) {
       logger.debug('  │ ❌ [群聊同步] 同步失败: $e');
       logger.debug('  └─────────────────────────────────────────────────────────');
-      return 0;
+      return {'count': 0, 'groupIds': syncedGroupIds};
     }
   }
   
@@ -361,13 +396,14 @@ class AppInitializationService {
       // is_read, created_at, read_at, sender_name, receiver_name, file_name,
       // quoted_message_id, quoted_message_content, status, deleted_by_users,
       // sender_avatar, receiver_avatar, call_type, voice_duration
+      // 🔴 关键修复：首次同步的历史消息都标记为已读，避免显示未读气泡
       return {
         'server_id': serverMsg['id'],
         'sender_id': serverMsg['sender_id'],
         'receiver_id': serverMsg['receiver_id'],
         'content': serverMsg['content'] ?? '',
         'message_type': serverMsg['message_type'] ?? 'text',
-        'is_read': (serverMsg['is_read'] == true || serverMsg['is_read'] == 1) ? 1 : 0,
+        'is_read': 1, // 🔴 首次同步的历史消息都标记为已读
         'created_at': serverMsg['created_at'] ?? DateTime.now().toIso8601String(),
         'sender_name': serverMsg['sender_name'],
         'receiver_name': serverMsg['receiver_name'],

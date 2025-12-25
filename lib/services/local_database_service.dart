@@ -2318,6 +2318,47 @@ class LocalDatabaseService {
     }
   }
 
+  /// 🔴 根据消息ID列表批量标记群组消息为已读
+  /// 用于首次安装时同步历史消息后，将这些消息标记为已读
+  Future<void> markGroupMessagesAsReadByIds(List<int> messageIds, int userId) async {
+    if (messageIds.isEmpty) return;
+    
+    try {
+      final now = DateTime.now().toIso8601String();
+      
+      if (_isDesktopPlatform) {
+        // 桌面端使用批处理
+        for (var messageId in messageIds) {
+          await _executeRawQuery(
+            'INSERT OR REPLACE INTO group_message_reads (group_message_id, user_id, read_at) VALUES (?, ?, ?)',
+            [messageId, userId, now],
+          );
+        }
+      } else {
+        // 移动端使用批量插入
+        final db = await database;
+        final batch = db.batch();
+        for (var messageId in messageIds) {
+          batch.insert(
+            'group_message_reads',
+            {
+              'group_message_id': messageId,
+              'user_id': userId,
+              'read_at': now,
+            },
+            conflictAlgorithm: ConflictAlgorithm.replace,
+          );
+        }
+        await batch.commit(noResult: true);
+      }
+
+      logger.debug('🔴 批量标记 ${messageIds.length} 条群组历史消息为已读');
+    } catch (e) {
+      logger.debug('批量标记群组历史消息已读失败: $e');
+      rethrow;
+    }
+  }
+
   /// 获取群聊消息已读状态
   Future<List<Map<String, dynamic>>> getGroupMessageReads(
     int groupMessageId,

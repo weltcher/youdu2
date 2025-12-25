@@ -586,7 +586,7 @@ func (gc *GroupController) GetGroupMessages(c *gin.Context) {
 	currentUserID := userID.(int)
 	userIDStr := strconv.Itoa(currentUserID)
 
-	// 直接从数据库查询并过滤
+	// 🔴 修复：添加 is_read 字段，通过查询 group_message_reads 表判断当前用户是否已读
 	query := `
 		SELECT 
 			gm.id, 
@@ -605,7 +605,12 @@ func (gc *GroupController) GetGroupMessages(c *gin.Context) {
 			gm.call_type,
 			gm.channel_name,
 			gm.status, 
-			gm.created_at
+			gm.created_at,
+			CASE 
+				WHEN gm.sender_id = $4 THEN true
+				WHEN EXISTS (SELECT 1 FROM group_message_reads gmr WHERE gmr.group_message_id = gm.id AND gmr.user_id = $4) THEN true
+				ELSE false
+			END as is_read
 		FROM group_messages gm
 		LEFT JOIN group_members gmem ON gmem.group_id = gm.group_id AND gmem.user_id = gm.sender_id
 		WHERE gm.group_id = $1
@@ -614,7 +619,7 @@ func (gc *GroupController) GetGroupMessages(c *gin.Context) {
 		LIMIT $2
 	`
 
-	rows, err := gc.groupRepo.DB.Query(query, groupID, limit, userIDStr)
+	rows, err := gc.groupRepo.DB.Query(query, groupID, limit, userIDStr, currentUserID)
 	if err != nil {
 		utils.LogDebug("获取群组消息失败: %v", err)
 		utils.Error(c, http.StatusInternalServerError, "获取消息失败")
@@ -625,6 +630,7 @@ func (gc *GroupController) GetGroupMessages(c *gin.Context) {
 	var messages []models.GroupMessage
 	for rows.Next() {
 		var msg models.GroupMessage
+		var isRead bool
 		err := rows.Scan(
 			&msg.ID,
 			&msg.GroupID,
@@ -643,11 +649,13 @@ func (gc *GroupController) GetGroupMessages(c *gin.Context) {
 			&msg.ChannelName,
 			&msg.Status,
 			&msg.CreatedAt,
+			&isRead,
 		)
 		if err != nil {
 			utils.LogDebug("扫描群组消息失败: %v", err)
 			continue
 		}
+		msg.IsRead = isRead // 🔴 设置已读状态
 		messages = append(messages, msg)
 	}
 
