@@ -126,10 +126,6 @@ class MessageModel {
             : int.tryParse(json['quoted_message_id']?.toString() ?? ''))
         : null;
     
-    // 🔴 添加日志：如果有引用消息，打印serverId和quotedMessageId
-    if (quotedMessageId != null) {
-      logger.debug('🔍 [MessageModel.fromJson] 消息包含引用 - id: $id, serverId: $serverId, quotedMessageId: $quotedMessageId, content: ${json['content']}');
-    }
 
     // 解析语音时长
     final voiceDuration = json['voice_duration'] != null
@@ -138,15 +134,6 @@ class MessageModel {
             : int.tryParse(json['voice_duration']?.toString() ?? ''))
         : null;
     
-    // 🔍 添加详细日志：记录语音消息的时长解析
-    if (json['message_type'] == 'voice') {
-      logger.debug('🎤 [MessageModel.fromJson] 语音消息解析:');
-      logger.debug('   - id: $id');
-      logger.debug('   - content: ${json['content']}');
-      logger.debug('   - voice_duration (原始): ${json['voice_duration']} (类型: ${json['voice_duration']?.runtimeType})');
-      logger.debug('   - voiceDuration (解析后): $voiceDuration');
-    }
-
     return MessageModel(
       id: id,
       serverId: serverId,

@@ -1233,6 +1233,33 @@ class WebSocketService {
     logger.debug('   - sender_id: ${messageData['sender_id']}');
     logger.debug('   - receiver_id: ${messageData['receiver_id']}');
     
+    // 🔴 特殊处理：如果是"请求添加好友【已通过】"或"请求添加好友【已驳回】"消息
+    // 清空该会话的所有历史消息，只保留最新的这条
+    final content = messageData['content']?.toString() ?? '';
+    final senderId = messageData['sender_id'] as int?;
+    final receiverId = messageData['receiver_id'] as int?;
+    
+    if ((content == '请求添加好友【已通过】' || content == '请求添加好友【已驳回】') && 
+        senderId != null && receiverId != null) {
+      logger.debug('🔄 [_insertPrivateMessageToLocal] 检测到好友审核消息，清空会话历史');
+      await _localDb.deleteMessagesBetweenUsers(senderId, receiverId);
+      logger.debug('✅ [_insertPrivateMessageToLocal] 已清空 $senderId 和 $receiverId 之间的历史消息');
+      
+      // 🔴 通知 UI 清空聊天界面的消息列表，并传递消息内容用于更新未读数
+      _messageController.add({
+        'type': 'clear_chat_history',
+        'data': {
+          'user_id': senderId,
+          'contact_id': receiverId,
+          'content': content, // 🔴 传递消息内容，用于判断是否需要更新未读数
+          'sender_name': messageData['sender_name'],
+          'sender_avatar': messageData['sender_avatar'],
+          'created_at': messageData['created_at'],
+        },
+      });
+      logger.debug('📢 [_insertPrivateMessageToLocal] 已发送清空聊天历史通知');
+    }
+    
     // 处理is_read字段：既要兼容旧数据的整数，又要处理新的布尔值
     final isReadValue = messageData['is_read'];
     final isReadInt = isReadValue is bool 

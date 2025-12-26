@@ -120,10 +120,12 @@ class _MobileProfileEditPageState extends State<MobileProfileEditPage> {
       );
 
       if (result != null && result.files.isNotEmpty) {
-        setState(() {
-          _selectedImage = File(result.files.first.path!);
-        });
-        await _uploadAvatar();
+        if (mounted) {
+          setState(() {
+            _selectedImage = File(result.files.first.path!);
+          });
+          await _uploadAvatar();
+        }
       }
     } catch (e) {
       logger.error('选择图片失败: $e');
@@ -139,44 +141,54 @@ class _MobileProfileEditPageState extends State<MobileProfileEditPage> {
   Future<void> _uploadAvatar() async {
     if (_selectedImage == null) return;
 
-    setState(() {
-      _isUploading = true;
-    });
+    if (mounted) {
+      setState(() {
+        _isUploading = true;
+      });
+    }
 
     try {
-      final response = await ApiService.uploadAvatar(
+      logger.debug('📤 开始上传头像: ${_selectedImage!.path}');
+      
+      // 使用简单上传方法（不分片），适合头像这种小文件
+      final response = await ApiService.uploadAvatarSimple(
         token: widget.token,
         filePath: _selectedImage!.path,
       );
 
+      logger.debug('📥 头像上传响应: $response');
+
       if (response['code'] == 0) {
-        setState(() {
-          _avatarUrl = response['data']['url'];
-          _isUploading = false;
-        });
+        final url = response['data']?['url'];
+        logger.debug('✅ 头像上传成功，URL: $url');
         if (mounted) {
+          setState(() {
+            _avatarUrl = url;
+            _isUploading = false;
+          });
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('头像上传成功')),
           );
         }
       } else {
-        setState(() {
-          _isUploading = false;
-        });
+        logger.error('❌ 头像上传失败: ${response['message']}');
         if (mounted) {
+          setState(() {
+            _isUploading = false;
+          });
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text(response['message'] ?? '头像上传失败')),
           );
         }
       }
     } catch (e) {
-      setState(() {
-        _isUploading = false;
-      });
-      logger.error('上传头像失败: $e');
+      logger.error('❌ 上传头像异常: $e');
       if (mounted) {
+        setState(() {
+          _isUploading = false;
+        });
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('头像上传失败')),
+          SnackBar(content: Text('头像上传失败: $e')),
         );
       }
     }

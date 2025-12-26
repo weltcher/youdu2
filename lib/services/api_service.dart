@@ -840,6 +840,64 @@ class ApiService {
     }
   }
 
+  /// 简单上传头像（不使用分片，直接上传整个图片）
+  ///
+  /// 请求参数:
+  /// - token: 登录凭证 (必填)
+  /// - filePath: 文件路径 (必填)
+  ///
+  /// 返回:
+  /// - code: 0 表示成功
+  /// - message: 响应消息
+  /// - data: { url: "...", file_name: "...", size: 0 }
+  /// 
+  /// 说明:
+  /// - 使用后端 /api/upload/avatar 接口上传
+  /// - 不使用分片，上传更简单快速
+  static Future<Map<String, dynamic>> uploadAvatarSimple({
+    required String token,
+    required String filePath,
+  }) async {
+    try {
+      logger.debug('📤 [头像上传] 开始简单上传...');
+      logger.debug('📤 [头像上传] 文件路径: $filePath');
+      
+      // 检查文件是否存在
+      final file = File(filePath);
+      if (!await file.exists()) {
+        throw ApiException(message: '文件不存在: $filePath');
+      }
+      
+      final fileSize = await file.length();
+      logger.debug('📤 [头像上传] 文件大小: $fileSize bytes');
+      
+      final headers = <String, String>{};
+      headers['Authorization'] = 'Bearer $token';
+
+      // 使用专门的头像上传接口
+      final uploadUrl = ApiConfig.getApiUrl(ApiConfig.uploadAvatar);
+      logger.debug('📤 [头像上传] 上传URL: $uploadUrl');
+
+      final request = http.MultipartRequest('POST', Uri.parse(uploadUrl));
+      request.headers.addAll(headers);
+      request.files.add(await http.MultipartFile.fromPath('file', filePath));
+
+      logger.debug('📤 [头像上传] 开始发送请求...');
+      final streamedResponse = await request.send().timeout(
+        const Duration(seconds: 60),
+      );
+      
+      logger.debug('📤 [头像上传] 收到响应，状态码: ${streamedResponse.statusCode}');
+      final response = await http.Response.fromStream(streamedResponse);
+      logger.debug('📤 [头像上传] 响应内容: ${response.body}');
+
+      return _handleResponse(response);
+    } catch (e) {
+      logger.error('❌ [头像上传] 上传失败: $e');
+      throw ApiException(message: '头像上传失败: $e');
+    }
+  }
+
   // ============ 消息相关 API ============
   // 注意：消息现在存储在本地SQLite数据库中，不再从服务器获取
 

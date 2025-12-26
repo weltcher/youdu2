@@ -99,6 +99,7 @@ class AgoraService {
   Function(int callDuration)? onCallEnded; // 通话结束回调（用于关闭对话框等），传递通话时长（秒）
   Function(int userId, String status, String? displayName)?
   onGroupCallMemberStatusChanged; // 群组通话成员状态变化回调
+  Function(int uid, bool isMuted)? onRemoteVideoMuted; // 远程用户视频静音状态变化回调
 
   /// 初始化 Agora 引擎
   Future<void> initialize(int currentUserId) async {
@@ -238,8 +239,15 @@ class AgoraService {
                   // 远程视频开始解码，说明视频已准备好
                   logger.debug('📹 [Agora] 远程视频开始解码，触发onRemoteVideoReady回调');
                   onRemoteVideoReady?.call(remoteUid);
+                  // 🔴 新增：通知远程用户视频已开启
+                  onRemoteVideoMuted?.call(remoteUid, false);
                 } else if (state == RemoteVideoState.remoteVideoStateStopped) {
                   logger.debug('📹 [Agora] 远程视频已停止');
+                  // 🔴 新增：通知远程用户视频已关闭（静音）
+                  if (reason == RemoteVideoStateReason.remoteVideoStateReasonRemoteMuted) {
+                    logger.debug('📹 [Agora] 远程用户主动关闭了摄像头');
+                    onRemoteVideoMuted?.call(remoteUid, true);
+                  }
                 } else if (state == RemoteVideoState.remoteVideoStateFrozen) {
                   logger.debug('📹 [Agora] 远程视频已冻结');
                 } else if (state == RemoteVideoState.remoteVideoStateFailed) {

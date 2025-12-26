@@ -65,8 +65,6 @@ class TimezoneHelper {
     
     // UTC + 8 = 上海时间
     final shanghaiTime = utc.add(const Duration(hours: shanghaiOffsetHours));
-    logger.debug('🕐 [utcToShanghaiTime] UTC时间: ${utc.toString()}');
-    logger.debug('🕐 [utcToShanghaiTime] 上海时间: ${shanghaiTime.toString()}');
     return shanghaiTime;
   }
   
@@ -111,47 +109,33 @@ class TimezoneHelper {
     final logger = Logger();
     String s = timeString.trim();
     
-    logger.debug('🕐 [parseToShanghaiTime] ===== 开始解析 =====');
-    logger.debug('🕐 [parseToShanghaiTime] 输入timeString: $timeString');
-    logger.debug('🕐 [parseToShanghaiTime] assumeUtc: $assumeUtc');
-    
     // 兼容错误数据：如果以多个Z结尾，压缩为单个Z
     final multiZPattern = RegExp(r'Z{2,}$');
     if (multiZPattern.hasMatch(s)) {
       s = s.replaceFirst(RegExp(r'Z+$'), 'Z');
-      logger.debug('🕐 [parseToShanghaiTime] 修正多个Z后: $s');
     }
 
     // 解析时间戳
     DateTime parsedTime;
     try {
       parsedTime = DateTime.parse(s);
-      logger.debug('🕐 [parseToShanghaiTime] 解析成功: ${parsedTime.toString()}');
-      logger.debug('🕐 [parseToShanghaiTime] parsedTime.isUtc: ${parsedTime.isUtc}');
     } catch (e) {
       try {
         final s2 = s.replaceFirst(RegExp(r'Z+$'), '');
         parsedTime = DateTime.parse(s2);
-        logger.debug('🕐 [parseToShanghaiTime] 移除Z后解析成功: ${parsedTime.toString()}');
       } catch (e2) {
-        logger.debug('⚠️ [时区解析] 无法解析时间字符串: $timeString，使用当前时间');
         return nowInShanghai();
       }
     }
 
     bool hasZSuffix = s.endsWith('Z');
-    logger.debug('🕐 [parseToShanghaiTime] hasZSuffix: $hasZSuffix');
   
     if (hasZSuffix && parsedTime.isUtc) {
       // 带 Z 后缀的时间是 UTC 时间，转换为上海时区
-      logger.debug('🕐 [parseToShanghaiTime] 走分支1: hasZSuffix && isUtc，调用utcToShanghaiTime');
       final result = utcToShanghaiTime(parsedTime);
-      logger.debug('🕐 [parseToShanghaiTime] 转换结果: ${result.toString()}');
-      logger.debug('🕐 [parseToShanghaiTime] ===== 解析结束 =====');
       return result;
     } else if (assumeUtc && !hasZSuffix) {
       // 没有 Z 后缀但假设为 UTC，转换为上海时区
-      logger.debug('🕐 [parseToShanghaiTime] 走分支2: assumeUtc && !hasZSuffix');
       final utcTime = DateTime.utc(
         parsedTime.year,
         parsedTime.month,
@@ -162,15 +146,10 @@ class TimezoneHelper {
         parsedTime.millisecond,
         parsedTime.microsecond,
       );
-      logger.debug('🕐 [parseToShanghaiTime] 构造的utcTime: ${utcTime.toString()}');
       final result = utcToShanghaiTime(utcTime);
-      logger.debug('🕐 [parseToShanghaiTime] 转换结果: ${result.toString()}');
-      logger.debug('🕐 [parseToShanghaiTime] ===== 解析结束 =====');
       return result;
     } else {
       // 没有 Z 后缀且不假设为 UTC，认为已经是上海时区时间
-      logger.debug('🕐 [parseToShanghaiTime] 走分支3: 直接返回parsedTime');
-      logger.debug('🕐 [parseToShanghaiTime] ===== 解析结束 =====');
       return parsedTime;
     }
   }

@@ -52,10 +52,6 @@ class ContactModel {
     
     // 记录好友关系的原始数据（特别是已通过的好友请求）
     final approvalStatus = json['approval_status']?.toString() ?? 'approved';
-    if (approvalStatus == 'approved') {
-      logger.debug('👥 [联系人模型] 解析好友关系 - 用户ID: ${json['user_id']}, 好友ID: ${json['friend_id']}, 状态: $approvalStatus');
-      logger.debug('👥 [联系人模型] created_at原始值: ${json['created_at']}');
-    }
     
     return ContactModel(
       relationId: json['relation_id'] is int

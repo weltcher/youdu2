@@ -718,6 +718,11 @@ class _MobileChatPageState extends State<MobileChatPage>
           // 🔴 处理服务器发来的消息撤回通知
           _handleMessageRecalledFromServer(data['data']);
           break;
+
+        case 'clear_chat_history':
+          // 🔴 处理清空聊天历史通知（好友审核通过/驳回时触发）
+          _handleClearChatHistory(data['data']);
+          break;
       }
     });
   }
@@ -785,6 +790,47 @@ class _MobileChatPageState extends State<MobileChatPage>
           duration: const Duration(seconds: 2),
         ),
       );
+    }
+  }
+
+  // 🔴 处理清空聊天历史通知（好友审核通过/驳回时触发）
+  void _handleClearChatHistory(dynamic data) async {
+    if (data == null) return;
+    
+    final userId = data['user_id'] as int?;
+    final contactId = data['contact_id'] as int?;
+    
+    logger.debug('🗑️ 收到清空聊天历史通知 - userId: $userId, contactId: $contactId');
+    
+    // 检查是否是当前会话
+    if (widget.isGroup) return; // 群聊不处理
+    
+    // 检查是否是当前私聊会话（双向检查）
+    final currentUserId = _currentUserId;
+    final chatUserId = widget.userId;
+    
+    final isCurrentChat = (userId == currentUserId && contactId == chatUserId) ||
+                          (userId == chatUserId && contactId == currentUserId);
+    
+    if (isCurrentChat) {
+      logger.debug('🗑️ 清空当前聊天界面的消息列表并重新加载');
+      
+      // 1. 清空内存中的消息列表
+      setState(() {
+        _messages.clear();
+      });
+      
+      // 2. 清空该会话的消息缓存
+      final cacheKey = _getCacheKey();
+      MobileChatPage._messageCache.remove(cacheKey);
+      logger.debug('🗑️ 已清空消息缓存: $cacheKey');
+      
+      // 3. 延迟一小段时间，确保数据库操作完成（新消息已插入）
+      await Future.delayed(const Duration(milliseconds: 200));
+      
+      // 4. 重新从数据库加载消息（会加载到最新的好友审核消息）
+      await _loadMessages(forceRefresh: true);
+      logger.debug('✅ 已重新加载消息列表');
     }
   }
 
@@ -974,17 +1020,27 @@ class _MobileChatPageState extends State<MobileChatPage>
               _messages[tempMessageIndex] = message.copyWith(status: 'sent');
             });
           } else {
-            // 没找到临时消息，直接添加（可能是其他设备发送的）
-            setState(() {
-              // 🔄 同样设置status='sent'，确保显示单钩
-              _messages.add(message.copyWith(status: 'sent'));
-            });
+            // 没找到临时消息，检查是否已存在后再添加（可能是其他设备发送的）
+            final exists = _messages.any((m) => m.id == message.id);
+            if (!exists) {
+              setState(() {
+                // 🔄 同样设置status='sent'，确保显示单钩
+                _messages.add(message.copyWith(status: 'sent'));
+              });
+            } else {
+              logger.debug('📩 自己发送的消息已存在，跳过添加: id=${message.id}');
+            }
           }
         } else {
-          // 不是自己发送的消息，直接添加
-          setState(() {
-            _messages.add(message);
-          });
+          // 不是自己发送的消息，检查是否已存在后再添加
+          final exists = _messages.any((m) => m.id == message.id);
+          if (!exists) {
+            setState(() {
+              _messages.add(message);
+            });
+          } else {
+            logger.debug('📩 消息已存在，跳过添加: id=${message.id}');
+          }
           
           // 🔴 关键修复：如果是"加入通话"按钮消息，强制刷新UI确保按钮立即显示
           if (message.messageType == 'join_voice_button' || message.messageType == 'join_video_button') {
@@ -1038,6 +1094,29 @@ class _MobileChatPageState extends State<MobileChatPage>
           // 🔴 关键修复：同时更新本地数据库中的已读状态
           // 这样会话列表刷新时不会显示错误的未读数
           unawaited(_markMessagesAsReadInDatabase(message.senderId));
+          
+          // 🔴 关键修复：更新未读数量缓存，确保退出对话框后不显示红色气泡
+          final unreadKey = 'user_${message.senderId}';
+          MobileHomePage.updateUnreadCount(unreadKey, 0);
+          // 同时添加到已读状态缓存
+          MobileHomePage.addToReadStatusCache(unreadKey);
+          logger.debug('✅ 已更新未读缓存: $unreadKey -> 0');
+        }
+        
+        // 🔴 修复：群聊消息也需要自动标记为已读（用户正在查看对话框）
+        if (message.senderId != _currentUserId && widget.isGroup && widget.groupId != null) {
+          // 立即标记该消息为已读（内存）
+          _markMessageAsReadLocally(message.id);
+          
+          // 🔴 关键修复：同时更新本地数据库中的已读状态
+          unawaited(_markGroupMessageAsReadInDatabase(message.id));
+          
+          // 🔴 关键修复：更新未读数量缓存，确保退出对话框后不显示红色气泡
+          final unreadKey = 'group_${widget.groupId}';
+          MobileHomePage.updateUnreadCount(unreadKey, 0);
+          // 同时添加到已读状态缓存
+          MobileHomePage.addToReadStatusCache(unreadKey);
+          logger.debug('✅ 已更新群聊未读缓存: $unreadKey -> 0');
         }
       } else {
       }
@@ -1054,6 +1133,18 @@ class _MobileChatPageState extends State<MobileChatPage>
       logger.debug('✅ 已更新数据库中的已读状态 - senderId: $senderId');
     } catch (e) {
       logger.error('❌ 更新数据库已读状态失败: $e');
+    }
+  }
+
+  /// 🔴 新增：标记数据库中的群聊消息为已读（使用服务器ID）
+  Future<void> _markGroupMessageAsReadInDatabase(int serverId) async {
+    try {
+      if (_currentUserId == null) return;
+      final messageService = MessageService();
+      await messageService.markGroupMessageAsReadByServerId(serverId, _currentUserId!);
+      logger.debug('✅ 已更新数据库中的群聊消息已读状态 - serverId: $serverId');
+    } catch (e) {
+      logger.error('❌ 更新数据库群聊消息已读状态失败: $e');
     }
   }
 
@@ -2250,6 +2341,15 @@ class _MobileChatPageState extends State<MobileChatPage>
     if (_token == null) return;
 
     try {
+      // 🔴 关键：进入会话时清除未读数量缓存
+      final unreadKey = widget.isGroup 
+          ? 'group_${widget.groupId ?? widget.userId}' 
+          : 'user_${widget.userId}';
+      MobileHomePage.updateUnreadCount(unreadKey, 0);
+      // 🔴 关键修复：同时添加到已读状态缓存，标记用户正在查看该对话
+      MobileHomePage.addToReadStatusCache(unreadKey);
+      logger.debug('✅ 已清除未读数量缓存并添加到已读缓存: $unreadKey');
+
       if (widget.isGroup && widget.groupId != null) {
         // 标记群组消息为已读
         await ApiService.markGroupMessagesAsRead(
@@ -5318,14 +5418,6 @@ class _MobileChatPageState extends State<MobileChatPage>
     
     if (message.quotedMessageId != null) {
       // 🔴 使用serverId匹配，因为quoted_message_id是服务器ID
-      logger.debug('🔍 [_buildQuotedMessageWithReply] 查找引用消息 - quotedMessageId: ${message.quotedMessageId}');
-      logger.debug('🔍 [_buildQuotedMessageWithReply] 本地消息列表数量: ${_messages.length}');
-      
-      // 打印所有消息的ID和serverId用于调试
-      for (var i = 0; i < _messages.length; i++) {
-        logger.debug('🔍 [_buildQuotedMessageWithReply] 消息[$i] - id: ${_messages[i].id}, serverId: ${_messages[i].serverId}');
-      }
-      
       final foundMessage = _messages.firstWhere(
         (msg) => msg.serverId == message.quotedMessageId || msg.id == message.quotedMessageId,
         orElse: () => MessageModel(
@@ -5343,7 +5435,6 @@ class _MobileChatPageState extends State<MobileChatPage>
       
       if (foundMessage.id != 0) {
         quotedMessage = foundMessage;
-        logger.debug('✅ [_buildQuotedMessageWithReply] 找到引用消息 - id: ${quotedMessage.id}, content: ${quotedMessage.content}, messageType: ${quotedMessage.messageType}');
         // 判断被引用消息的发送者是否是当前用户
         if (quotedMessage.senderId == _currentUserId) {
           quotedSenderName = '我';
@@ -5352,7 +5443,6 @@ class _MobileChatPageState extends State<MobileChatPage>
           quotedSenderName = quotedMessage.displaySenderName;
         }
       } else {
-        logger.debug('❌ [_buildQuotedMessageWithReply] 未找到引用消息 - quotedMessageId: ${message.quotedMessageId}');
       }
     }
 
@@ -7888,7 +7978,8 @@ class _MobileChatPageState extends State<MobileChatPage>
                     _pickFile();
                   },
                 ),
-                if (!widget.isFileAssistant) ...[
+                if (!widget.isFileAssistant && !widget.isGroup) ...[
+                  // 🔴 暂时屏蔽群组通话功能，只在非群组聊天时显示通话按钮
                   _buildToolButton(
                     icon: Icons.phone,
                     label: '语音通话',
@@ -8782,6 +8873,13 @@ class _MobileChatPageState extends State<MobileChatPage>
   void dispose() {
     // 🔴 标记聊天页面已关闭
     MobileChatPage.isChatPageOpen = false;
+    
+    // 🔴 关键修复：退出聊天页面时，从已读状态缓存中移除
+    final unreadKey = widget.isGroup 
+        ? 'group_${widget.groupId ?? widget.userId}' 
+        : 'user_${widget.userId}';
+    MobileHomePage.removeFromReadStatusCache(unreadKey);
+    logger.debug('📤 聊天页面关闭，已从已读缓存移除: $unreadKey');
     
     // 清除头像缓存（确保页面关闭时清理缓存数据）
     _avatarCache.clear();

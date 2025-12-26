@@ -366,6 +366,11 @@ class _DesktopHomePageState extends State<DesktopHomePage> with WindowListener {
       _avatarCache.clear();
       logger.debug('🗑️ 已清除头像缓存');
       
+      // 🔴 清除Flutter图片缓存（避免切换账号后显示旧头像）
+      PaintingBinding.instance.imageCache.clear();
+      PaintingBinding.instance.imageCache.clearLiveImages();
+      logger.debug('🖼️ Flutter图片缓存已清除');
+      
       // 1. 首先加载token到内存
       await _loadToken();
 
@@ -3664,6 +3669,10 @@ class _DesktopHomePageState extends State<DesktopHomePage> with WindowListener {
         // 撤回消息失败
         _handleRecallError(message['data']);
         break;
+      case 'clear_chat_history':
+        // 🔴 处理清空聊天历史通知（好友审核通过/驳回时触发）
+        _handleClearChatHistory(message['data']);
+        break;
       default:
         logger.debug('未知消息类型: $type');
     }
@@ -3682,6 +3691,68 @@ class _DesktopHomePageState extends State<DesktopHomePage> with WindowListener {
           duration: const Duration(seconds: 2),
         ),
       );
+    }
+  }
+
+  // 🔴 处理清空聊天历史通知（好友审核通过/驳回时触发）
+  void _handleClearChatHistory(dynamic data) async {
+    if (data == null) return;
+    
+    final userId = data['user_id'] as int?;
+    final contactId = data['contact_id'] as int?;
+    final content = data['content'] as String?;
+    
+    logger.debug('🗑️ [PC端] 收到清空聊天历史通知 - userId: $userId, contactId: $contactId, content: $content');
+    
+    // 🔴 关键：判断当前用户是发送方还是接收方
+    final currentUserId = _currentUserId;
+    if (currentUserId == null || userId == null || contactId == null) return;
+    
+    final isReceiver = currentUserId == contactId;
+    final targetContactId = isReceiver ? userId : contactId;
+    
+    // 🔴 关键修复：检查并恢复已删除的会话
+    // 当用户之前删除了会话，然后重新添加好友并通过审核时，需要恢复会话
+    final contactKey = Storage.generateContactKey(isGroup: false, id: targetContactId);
+    final isDeleted = await Storage.isChatDeletedForCurrentUser(contactKey);
+    if (isDeleted) {
+      logger.debug('🔄 [PC端] 检测到已删除的会话，准备恢复: $contactKey');
+      await Storage.removeDeletedChatForCurrentUser(contactKey);
+      logger.debug('✅ [PC端] 已恢复删除的会话: $contactKey');
+    }
+    
+    // 🔴 更新未读数量（如果是接收方且是通过消息）
+    if (isReceiver && content == '请求添加好友【已通过】') {
+      logger.debug('📢 [PC端] 好友审核通过，准备刷新会话列表');
+      // 延迟一小段时间，确保数据库操作完成后再刷新
+      await Future.delayed(const Duration(milliseconds: 100));
+      await _loadRecentContacts();
+      logger.debug('✅ [PC端] 会话列表已刷新');
+    }
+    
+    // 检查是否是当前会话
+    if (_isCurrentChatGroup) return; // 群聊不处理
+    
+    // 检查是否是当前私聊会话（双向检查）
+    final chatUserId = _currentChatUserId;
+    
+    final isCurrentChat = (userId == currentUserId && contactId == chatUserId) ||
+                          (userId == chatUserId && contactId == currentUserId);
+    
+    if (isCurrentChat) {
+      logger.debug('🗑️ [PC端] 清空当前聊天界面的消息列表并重新加载');
+      
+      // 1. 清空内存中的消息列表
+      setState(() {
+        _messages.clear();
+      });
+      
+      // 2. 延迟一小段时间，确保数据库操作完成（新消息已插入）
+      await Future.delayed(const Duration(milliseconds: 200));
+      
+      // 3. 重新从数据库加载消息（会加载到最新的好友审核消息）
+      await _loadMessageHistory(chatUserId!, isGroup: false);
+      logger.debug('✅ [PC端] 已重新加载消息列表');
     }
   }
 
@@ -3817,6 +3888,13 @@ class _DesktopHomePageState extends State<DesktopHomePage> with WindowListener {
         return;
       }
 
+      // 🔴 特殊处理：如果是好友审核消息，跳过_handleNewMessage的处理
+      // 因为这类消息会通过clear_chat_history事件单独处理
+      if (content == '请求添加好友【已通过】' || content == '请求添加好友【已驳回】') {
+        logger.debug('📨 检测到好友审核消息，跳过_handleNewMessage处理，由clear_chat_history事件处理');
+        return;
+      }
+
       // 检查并恢复被删除的会话（等待完成，确保恢复后再处理消息）
       final restored = await _checkAndRestoreDeletedChat(isGroup: false, id: senderId);
       if (restored) {
@@ -3883,6 +3961,13 @@ class _DesktopHomePageState extends State<DesktopHomePage> with WindowListener {
 
         // 创建消息模型（使用fromJson自动解析所有字段）
         final newMessage = MessageModel.fromJson(messageData);
+
+        // 检查消息是否已存在，避免重复添加
+        final exists = _messages.any((m) => m.id == newMessage.id);
+        if (exists) {
+          logger.debug('📩 消息已存在，跳过添加: id=${newMessage.id}');
+          return;
+        }
 
         // 添加到消息列表
         setState(() {
@@ -5880,6 +5965,23 @@ class _DesktopHomePageState extends State<DesktopHomePage> with WindowListener {
           _userAvatar = user.avatar.isNotEmpty ? user.avatar : null;
           _isLoadingUserInfo = false;
         });
+        
+        // 🔴 更新 Storage 中的头像URL（确保聊天页面能加载最新头像）
+        if (user.avatar.isNotEmpty) {
+          await Storage.saveAvatar(user.avatar);
+          logger.debug('✅ 已更新 Storage 中的头像: ${user.avatar}');
+        }
+        
+        // 🔴 更新已登录账号列表中的头像（确保切换账号页面显示最新头像）
+        if (_currentUserId > 0) {
+          await Storage.addLoggedInAccount(
+            userId: _currentUserId,
+            username: user.username,
+            fullName: user.fullName,
+            avatar: user.avatar.isNotEmpty ? user.avatar : null,
+          );
+          logger.debug('✅ 已更新已登录账号列表中的头像');
+        }
       } else {
         setState(() {
           _isLoadingUserInfo = false;
@@ -10688,6 +10790,15 @@ class _DesktopHomePageState extends State<DesktopHomePage> with WindowListener {
             content.contains('您已被邀请加入群组') || 
             content.contains('创建新群组')) {
           logger.debug('📢 收到群组创建/邀请系统消息，确保群组在最近联系人列表中显示: $content');
+          
+          // 🔴 关键修复：先将当前用户添加到group_members表，确保SQL查询能找到该群组
+          final currentUserId = await Storage.getUserId();
+          if (currentUserId != null) {
+            final localDb = LocalDatabaseService();
+            await localDb.addGroupMember(groupId, currentUserId);
+            logger.debug('✅ 已将用户 $currentUserId 添加到群组 $groupId 的成员表');
+          }
+          
           // 检查并恢复被删除的群组会话（等待完成，确保恢复后再检查列表）
           await _checkAndRestoreDeletedChat(isGroup: true, id: groupId);
 

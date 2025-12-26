@@ -184,6 +184,12 @@ class _LoginPageState extends State<LoginPage> {
         MobileChatPage.clearAllCache();
         MobileContactsPage.clearAllCache();
         MobileHomePage.clearAllCache();
+        
+        // 🔴 清除Flutter图片缓存（避免切换账号后显示旧头像）
+        PaintingBinding.instance.imageCache.clear();
+        PaintingBinding.instance.imageCache.clearLiveImages();
+        logger.info('🖼️ Flutter图片缓存已清除');
+        
         logger.info('✅ 所有本地缓存已清除，即将重新加载数据');
 
         _showSuccess('登录成功');

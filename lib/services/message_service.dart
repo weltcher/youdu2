@@ -130,7 +130,7 @@ class MessageService {
       }
 
       final response = await ApiService.post(
-        '/api/v1/message/mark-read',
+        '/api/messages/mark-read',
         {'sender_id': senderId},
         token: token,
       );
@@ -177,11 +177,13 @@ class MessageService {
   }
 
   /// 格式化消息预览：将特殊类型的消息转换为显示文本
+  /// [isSender] 当前用户是否是消息的发送者（用于通话拒绝/取消消息的显示）
   String _formatMessagePreview(
     String messageType,
     String content,
     String? fileName, {
     int? voiceDuration,
+    bool isSender = false,
   }) {
     switch (messageType) {
       case 'image':
@@ -199,6 +201,15 @@ class MessageService {
       case 'call_ended':
       case 'call_ended_video':
         return '[通话结束]';
+      // 🔴 修复：通话拒绝消息根据当前用户是发送者还是接收者显示不同内容
+      case 'call_rejected':
+      case 'call_rejected_video':
+        // 发送者（拒绝方）看到"已拒绝"，接收者（被拒绝方）看到"对方已拒绝"
+        return isSender ? '已拒绝' : '对方已拒绝';
+      case 'call_cancelled':
+      case 'call_cancelled_video':
+        // 发送者（取消方）看到"已取消"，接收者（被取消方）看到"对方已取消"
+        return isSender ? '已取消' : '对方已取消';
       default:
         // 检测是否为纯表情消息（格式：[emotion:xxx.png]）
         if (content.contains('[emotion:')) {
@@ -504,11 +515,15 @@ class MessageService {
           final messageType = msg['message_type']?.toString() ?? 'text';
           final fileName = msg['file_name']?.toString();
 
+          // 🔴 判断当前用户是否是消息的发送者（用于通话拒绝/取消消息的显示）
+          final isSender = senderId == currentUserId;
+
           // 格式化消息预览
           final formattedMessage = _formatMessagePreview(
             messageType,
             content,
             fileName,
+            isSender: isSender,
           );
 
           int actualContactId = contactId;
@@ -651,7 +666,6 @@ class MessageService {
             id: contactType == 'file_assistant' ? currentUserId : contactId,
           );
           final doNotDisturb = await Storage.getDoNotDisturb(currentUserId, contactKey);
-          logger.debug('🔔 联系人 $resolvedFullName 的免打扰状态: $doNotDisturb (key: $contactKey)');
 
           // 🔴 时区处理：本地数据库存储的时间已经是上海时区，直接使用
           String lastMessageTime = msg['last_message_time']?.toString() ?? DateTime.now().toIso8601String();
@@ -833,6 +847,16 @@ class MessageService {
       await _localDb.markGroupMessageAsRead(groupMessageId, userId);
     } catch (e) {
       logger.debug('标记群聊消息为已读失败: $e');
+      rethrow;
+    }
+  }
+
+  /// 🔴 通过服务器ID标记群聊消息为已读
+  Future<void> markGroupMessageAsReadByServerId(int serverId, int userId) async {
+    try {
+      await _localDb.markGroupMessageAsReadByServerId(serverId, userId);
+    } catch (e) {
+      logger.debug('通过服务器ID标记群聊消息为已读失败: $e');
       rethrow;
     }
   }

@@ -642,6 +642,7 @@ class LocalDatabaseService {
         message_type VARCHAR(20) DEFAULT 'text',
         is_read BOOLEAN DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        created_at_ms INTEGER,
         read_at TIMESTAMP,
         sender_name VARCHAR(50),
         receiver_name VARCHAR(50),
@@ -679,6 +680,7 @@ class LocalDatabaseService {
         quoted_message_content TEXT,
         status VARCHAR(20) DEFAULT 'normal',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        created_at_ms INTEGER,
         sender_avatar TEXT,
         mentioned_user_ids TEXT,
         mentions TEXT,
@@ -766,7 +768,8 @@ class LocalDatabaseService {
         quoted_message_id INTEGER,
         quoted_message_content TEXT,
         status VARCHAR(20) DEFAULT 'normal',
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        created_at_ms INTEGER
       )
     ''');
 
@@ -917,12 +920,12 @@ class LocalDatabaseService {
         // iOS 使用普通 sqflite（不加密），Android 使用 sqflite_cipher（加密）
         if (Platform.isIOS) {
           logger.debug('📦 [数据库初始化] 步骤4: iOS 平台使用普通 sqflite（不加密）...');
-          logger.debug('📦 [数据库初始化] 参数: path=$path, version=7');
+          logger.debug('📦 [数据库初始化] 参数: path=$path, version=8');
           
           try {
             db = await openDatabase(
               path,
-              version: 7,
+              version: 8,
               onCreate: _createDatabase,
               onUpgrade: _upgradeDatabase,
             );
@@ -937,13 +940,13 @@ class LocalDatabaseService {
         } else {
           // Android 使用 sqflite_cipher 加密
           logger.debug('📦 [数据库初始化] 步骤4: Android 平台使用 sqflite_cipher（加密）...');
-          logger.debug('📦 [数据库初始化] 参数: path=$path, version=7');
+          logger.debug('📦 [数据库初始化] 参数: path=$path, version=8');
           
           try {
             db = await sqflite_cipher.openDatabase(
               path,
               password: databaseKey, // 🔐 设置数据库密码（复杂密钥）
-              version: 7, // 🔴 升级到版本7（添加group_messages表的file_size、is_read、is_recalled字段）
+              version: 8, // 🔴 升级到版本8（添加created_at_ms字段）
               onCreate: _createDatabase,
               onUpgrade: _upgradeDatabase,
             );
@@ -1008,6 +1011,7 @@ class LocalDatabaseService {
         message_type VARCHAR(20) DEFAULT 'text',
         is_read BOOLEAN DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        created_at_ms INTEGER,
         read_at TIMESTAMP,
         sender_name VARCHAR(50),
         receiver_name VARCHAR(50),
@@ -1045,6 +1049,7 @@ class LocalDatabaseService {
         quoted_message_content TEXT,
         status VARCHAR(20) DEFAULT 'normal',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        created_at_ms INTEGER,
         sender_avatar TEXT,
         mentioned_user_ids TEXT,
         mentions TEXT,
@@ -1132,7 +1137,8 @@ class LocalDatabaseService {
         quoted_message_id INTEGER,
         quoted_message_content TEXT,
         status VARCHAR(20) DEFAULT 'normal',
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        created_at_ms INTEGER
       )
     ''');
 
@@ -1287,6 +1293,80 @@ class LocalDatabaseService {
         rethrow;
       }
     }
+
+    // 版本7 -> 版本8: 添加created_at_ms字段（毫秒时间戳，用于精确排序）
+    if (oldVersion < 8) {
+      logger.debug('执行数据库升级: 添加messages和group_messages表的created_at_ms字段');
+      try {
+        await db.execute('ALTER TABLE messages ADD COLUMN created_at_ms INTEGER');
+        await db.execute('ALTER TABLE group_messages ADD COLUMN created_at_ms INTEGER');
+        await db.execute('ALTER TABLE file_assistant_messages ADD COLUMN created_at_ms INTEGER');
+        logger.debug('✅ 数据库升级完成: created_at_ms字段已添加');
+        
+        // 🔴 迁移现有数据：将created_at转换为毫秒时间戳
+        logger.debug('🔄 开始迁移现有消息的时间戳...');
+        await _migrateCreatedAtToMs(db);
+        logger.debug('✅ 时间戳迁移完成');
+      } catch (e) {
+        logger.error('❌ 数据库升级失败: $e');
+        rethrow;
+      }
+    }
+  }
+
+  /// 🔴 迁移现有消息的created_at到created_at_ms
+  Future<void> _migrateCreatedAtToMs(Database db) async {
+    try {
+      // 迁移私聊消息
+      final messages = await db.rawQuery('SELECT id, created_at FROM messages WHERE created_at_ms IS NULL');
+      for (var msg in messages) {
+        final id = msg['id'] as int;
+        final createdAt = msg['created_at'] as String?;
+        if (createdAt != null && createdAt.isNotEmpty) {
+          try {
+            final timeStr = createdAt.endsWith('Z') ? createdAt : '${createdAt}Z';
+            final ms = DateTime.parse(timeStr).millisecondsSinceEpoch;
+            await db.execute('UPDATE messages SET created_at_ms = ? WHERE id = ?', [ms, id]);
+          } catch (e) {
+            // 忽略解析错误
+          }
+        }
+      }
+      
+      // 迁移群聊消息
+      final groupMessages = await db.rawQuery('SELECT id, created_at FROM group_messages WHERE created_at_ms IS NULL');
+      for (var msg in groupMessages) {
+        final id = msg['id'] as int;
+        final createdAt = msg['created_at'] as String?;
+        if (createdAt != null && createdAt.isNotEmpty) {
+          try {
+            final timeStr = createdAt.endsWith('Z') ? createdAt : '${createdAt}Z';
+            final ms = DateTime.parse(timeStr).millisecondsSinceEpoch;
+            await db.execute('UPDATE group_messages SET created_at_ms = ? WHERE id = ?', [ms, id]);
+          } catch (e) {
+            // 忽略解析错误
+          }
+        }
+      }
+      
+      // 迁移文件助手消息
+      final fileMessages = await db.rawQuery('SELECT id, created_at FROM file_assistant_messages WHERE created_at_ms IS NULL');
+      for (var msg in fileMessages) {
+        final id = msg['id'] as int;
+        final createdAt = msg['created_at'] as String?;
+        if (createdAt != null && createdAt.isNotEmpty) {
+          try {
+            final timeStr = createdAt.endsWith('Z') ? createdAt : '${createdAt}Z';
+            final ms = DateTime.parse(timeStr).millisecondsSinceEpoch;
+            await db.execute('UPDATE file_assistant_messages SET created_at_ms = ? WHERE id = ?', [ms, id]);
+          } catch (e) {
+            // 忽略解析错误
+          }
+        }
+      }
+    } catch (e) {
+      logger.error('❌ 迁移时间戳失败: $e');
+    }
   }
 
   /// 确保voice_duration列存在（用于修复旧数据库）
@@ -1377,8 +1457,21 @@ class LocalDatabaseService {
         logger.debug('🎤 [insertMessage] 语音消息 - voice_duration: ${message['voice_duration']} (类型: ${message['voice_duration']?.runtimeType})');
       }
       
+      // 🔴 自动计算并添加毫秒时间戳（用于精确排序）
+      if (message['created_at_ms'] == null && message['created_at'] != null) {
+        try {
+          final createdAtStr = message['created_at'].toString();
+          final timeStr = createdAtStr.endsWith('Z') ? createdAtStr : '${createdAtStr}Z';
+          message['created_at_ms'] = DateTime.parse(timeStr).millisecondsSinceEpoch;
+        } catch (e) {
+          message['created_at_ms'] = DateTime.now().millisecondsSinceEpoch;
+        }
+      } else if (message['created_at_ms'] == null) {
+        message['created_at_ms'] = DateTime.now().millisecondsSinceEpoch;
+      }
+      
       final id = await _executeInsert('messages', message, orIgnore: orIgnore);
-      logger.debug('✅ [insertMessage] 消息插入成功 - localId: $id, server_id: ${message['server_id']}');
+      logger.debug('✅ [insertMessage] 消息插入成功 - localId: $id, server_id: ${message['server_id']}, created_at_ms: ${message['created_at_ms']}');
       return id;
     } catch (e) {
       logger.debug('❌ [insertMessage] 插入私聊消息失败: $e');
@@ -1521,14 +1614,11 @@ class LocalDatabaseService {
       final sortedResults = results.reversed.toList();
       
       // 🔴 添加日志：打印所有消息的server_id
-      logger.debug('📊 [getMessages] 从数据库加载 ${sortedResults.length} 条消息${beforeId != null ? ' (beforeId: $beforeId)' : ''}');
       for (var i = 0; i < sortedResults.length; i++) {
         final msg = sortedResults[i];
-        logger.debug('📊 [getMessages] 消息[$i] - id: ${msg['id']}, server_id: ${msg['server_id']}, status: ${msg['status']}, quoted_message_id: ${msg['quoted_message_id']}');
         
         // 🔍 如果是语音消息，打印voice_duration字段
         if (msg['message_type'] == 'voice') {
-          logger.debug('🎤 [getMessages] 语音消息[$i] - voice_duration: ${msg['voice_duration']} (类型: ${msg['voice_duration']?.runtimeType})');
         }
       }
       
@@ -1553,6 +1643,7 @@ class LocalDatabaseService {
           'user' as contact_type,
           CASE WHEN sender_id = ? THEN receiver_id ELSE sender_id END as contact_id,
           created_at as last_message_time,
+          created_at_ms as last_message_time_ms,
           sender_id,
           receiver_id,
           content,
@@ -1594,6 +1685,7 @@ class LocalDatabaseService {
           'group' as contact_type,
           group_id as contact_id,
           created_at as last_message_time,
+          created_at_ms as last_message_time_ms,
           sender_id,
           group_id as receiver_id,
           content,
@@ -1637,6 +1729,7 @@ class LocalDatabaseService {
           'file_assistant' as contact_type,
           0 as contact_id,
           created_at as last_message_time,
+          created_at_ms as last_message_time_ms,
           ? as sender_id,
           ? as receiver_id,
           content,
@@ -1659,14 +1752,80 @@ class LocalDatabaseService {
       );
       allContacts.addAll(fileAssistant);
       
-      // 4. 按时间排序
+      // 4. 按时间排序（🔴 优先使用毫秒时间戳排序）
+      // 🔍 调试：打印排序前的时间
+      logger.debug('📊 [排序前] 联系人时间列表:');
+      for (int i = 0; i < allContacts.length && i < 10; i++) {
+        final c = allContacts[i];
+        final name = c['contact_type'] == 'group' 
+            ? (c['group_name'] ?? 'group_${c['contact_id']}')
+            : (c['sender_name'] ?? c['receiver_name'] ?? 'user_${c['contact_id']}');
+        logger.debug('  $name: ${c['last_message_time']} (ms: ${c['last_message_time_ms']})');
+      }
+      
       allContacts.sort((a, b) {
-        final aTime = a['last_message_time'] as String?;
-        final bTime = b['last_message_time'] as String?;
-        if (aTime == null) return 1;
-        if (bTime == null) return -1;
-        return bTime.compareTo(aTime);
+        final aTimeStr = a['last_message_time'] as String?;
+        final bTimeStr = b['last_message_time'] as String?;
+        if (aTimeStr == null || aTimeStr.isEmpty) return 1;
+        if (bTimeStr == null || bTimeStr.isEmpty) return -1;
+        
+        // 🔴 优先使用毫秒时间戳排序（更精确）
+        final aMs = a['last_message_time_ms'] as int?;
+        final bMs = b['last_message_time_ms'] as int?;
+        
+        // 如果两个都有毫秒时间戳，直接比较
+        if (aMs != null && bMs != null) {
+          return bMs.compareTo(aMs); // 降序：最新的在前
+        }
+        
+        // 🔴 回退：使用字符串时间解析
+        int aMillis;
+        int bMillis;
+        
+        // 优先使用毫秒时间戳
+        if (aMs != null) {
+          aMillis = aMs;
+        } else {
+          try {
+            // 不带Z的本地时间需要手动指定为UTC解析，避免被当作本地时间处理
+            if (aTimeStr.endsWith('Z')) {
+              aMillis = DateTime.parse(aTimeStr).millisecondsSinceEpoch;
+            } else {
+              // 本地时间字符串，直接当作UTC解析（因为服务器存的就是上海时间的字面值）
+              aMillis = DateTime.parse('${aTimeStr}Z').millisecondsSinceEpoch;
+            }
+          } catch (e) {
+            aMillis = 0;
+          }
+        }
+        
+        if (bMs != null) {
+          bMillis = bMs;
+        } else {
+          try {
+            if (bTimeStr.endsWith('Z')) {
+              bMillis = DateTime.parse(bTimeStr).millisecondsSinceEpoch;
+            } else {
+              // 本地时间字符串，直接当作UTC解析
+              bMillis = DateTime.parse('${bTimeStr}Z').millisecondsSinceEpoch;
+            }
+          } catch (e) {
+            bMillis = 0;
+          }
+        }
+        
+        return bMillis.compareTo(aMillis); // 降序：最新的在前
       });
+      
+      // 🔍 调试：打印排序后的时间
+      logger.debug('📊 [排序后] 联系人时间列表:');
+      for (int i = 0; i < allContacts.length && i < 10; i++) {
+        final c = allContacts[i];
+        final name = c['contact_type'] == 'group' 
+            ? (c['group_name'] ?? 'group_${c['contact_id']}')
+            : (c['sender_name'] ?? c['receiver_name'] ?? 'user_${c['contact_id']}');
+        logger.debug('  $name: ${c['last_message_time']} (ms: ${c['last_message_time_ms']})');
+      }
 
       return allContacts;
     } catch (e) {
@@ -1885,6 +2044,22 @@ class LocalDatabaseService {
     }
   }
 
+  /// 🔴 物理删除两个用户之间的所有私聊消息
+  /// 用于好友审核通过/驳回时清空历史消息
+  Future<int> deleteMessagesBetweenUsers(int userId1, int userId2) async {
+    try {
+      final count = await _executeRawDelete(
+        'DELETE FROM messages WHERE (sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?)',
+        [userId1, userId2, userId2, userId1],
+      );
+      logger.debug('🗑️ 物理删除两用户间的私聊消息: userId1=$userId1, userId2=$userId2, 删除数量=$count');
+      return count;
+    } catch (e) {
+      logger.error('物理删除私聊消息失败: $e', error: e);
+      rethrow;
+    }
+  }
+
   /// 删除指定群组的所有消息（软删除：标记为已删除）
   Future<int> deleteAllGroupMessages(int groupId, int userId) async {
     try {
@@ -1952,9 +2127,22 @@ class LocalDatabaseService {
     logger.debug('   - voice_duration: ${message['voice_duration']} (类型: ${message['voice_duration']?.runtimeType})');
     
     try {
+      // 🔴 自动计算并添加毫秒时间戳（用于精确排序）
+      if (message['created_at_ms'] == null && message['created_at'] != null) {
+        try {
+          final createdAtStr = message['created_at'].toString();
+          final timeStr = createdAtStr.endsWith('Z') ? createdAtStr : '${createdAtStr}Z';
+          message['created_at_ms'] = DateTime.parse(timeStr).millisecondsSinceEpoch;
+        } catch (e) {
+          message['created_at_ms'] = DateTime.now().millisecondsSinceEpoch;
+        }
+      } else if (message['created_at_ms'] == null) {
+        message['created_at_ms'] = DateTime.now().millisecondsSinceEpoch;
+      }
+      
       final id = await _executeInsert('group_messages', message, orIgnore: orIgnore);
       if (id > 0) {
-        logger.debug('💾 [LocalDB-群组] 插入群聊消息成功: ID=$id');
+        logger.debug('💾 [LocalDB-群组] 插入群聊消息成功: ID=$id, created_at_ms: ${message['created_at_ms']}');
         
         // 🔴 立即查询刚插入的数据验证
         if (message['message_type'] == 'voice') {
@@ -2253,6 +2441,42 @@ class LocalDatabaseService {
       logger.debug('标记群聊消息已读: MessageID=$groupMessageId, UserID=$userId');
     } catch (e) {
       logger.debug('标记群聊消息已读失败: $e');
+      rethrow;
+    }
+  }
+
+  /// 🔴 通过服务器ID记录群聊消息已读
+  Future<void> markGroupMessageAsReadByServerId(int serverId, int userId) async {
+    try {
+      // 先通过server_id查找本地消息ID
+      final results = await _executeRawQuery(
+        'SELECT id FROM group_messages WHERE server_id = ?',
+        [serverId],
+      );
+      
+      if (results.isEmpty) {
+        logger.debug('未找到server_id=$serverId的群聊消息，跳过标记已读');
+        return;
+      }
+      
+      final localId = results.first['id'] as int;
+      
+      // 使用本地ID标记已读
+      if (_isDesktopPlatform) {
+        await _executeRawQuery(
+          'INSERT OR REPLACE INTO group_message_reads (group_message_id, user_id, read_at) VALUES (?, ?, ?)',
+          [localId, userId, DateTime.now().toIso8601String()],
+        );
+      } else {
+        await _executeInsert('group_message_reads', {
+          'group_message_id': localId,
+          'user_id': userId,
+          'read_at': DateTime.now().toIso8601String(),
+        });
+      }
+      logger.debug('通过server_id标记群聊消息已读: serverId=$serverId, localId=$localId, userId=$userId');
+    } catch (e) {
+      logger.debug('通过server_id标记群聊消息已读失败: $e');
       rethrow;
     }
   }

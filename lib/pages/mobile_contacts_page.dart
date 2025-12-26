@@ -1702,6 +1702,16 @@ class _MobileContactsPageState extends State<MobileContactsPage>
           duration: const Duration(seconds: 2),
         ),
       );
+      
+      // 🔴 关键：更新未读数量缓存，将该联系人的未读数设为1
+      // 这样会话列表中会显示红色气泡
+      final unreadKey = 'user_${contact.friendId}';
+      MobileHomePage.updateUnreadCount(unreadKey, 1);
+      logger.debug('✅ 已更新未读数量缓存: $unreadKey -> 1');
+      
+      // 🔴 刷新会话列表，使红色气泡立即显示
+      MobileChatListPage.needRefresh();
+      logger.debug('📢 已通知会话列表刷新');
     }
 
     // 2. 异步请求接口

@@ -84,6 +84,7 @@ class _VoiceCallPageState extends State<VoiceCallPage> {
   // 视频控制器
   AgoraVideoView? _localVideoView;
   AgoraVideoView? _remoteVideoView;
+  bool _isRemoteVideoMuted = false; // 🔴 新增：远程用户视频静音状态
   
   // 视频画面切换状态：true表示远程画面在大框，false表示本地画面在大框
   // 默认本地画面（自己的摄像头）在大框显示，方便调整角度和查看自己的状态
@@ -604,6 +605,16 @@ class _VoiceCallPageState extends State<VoiceCallPage> {
       }
       
       setState(() {});
+    };
+
+    // 🔴 新增：监听远程用户视频静音状态变化
+    _agoraService.onRemoteVideoMuted = (uid, isMuted) {
+      if (_disposed || !mounted || _isClosing) return;
+      logger.debug('📹 远程用户视频静音状态变化: uid=$uid, isMuted=$isMuted');
+      
+      setState(() {
+        _isRemoteVideoMuted = isMuted;
+      });
     };
 
     // 群组通话成员状态变化
@@ -3264,19 +3275,52 @@ class _VoiceCallPageState extends State<VoiceCallPage> {
     }
   }
 
+  // 🔴 新增：构建远程视频或摄像头关闭占位符
+  Widget _buildRemoteVideoOrPlaceholder({bool isSmallView = false}) {
+    if (!_isRemoteVideoMuted && _remoteVideoView != null) {
+      return _remoteVideoView!;
+    } else {
+      // 远程用户摄像头关闭时显示占位符
+      return Container(
+        color: Colors.black,
+        child: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                Icons.videocam_off,
+                size: isSmallView ? 32 : 48,
+                color: Colors.white54,
+              ),
+              if (!isSmallView) ...[
+                const SizedBox(height: 8),
+                const Text(
+                  '对方摄像头已关闭',
+                  style: TextStyle(color: Colors.white54, fontSize: 14),
+                ),
+              ],
+            ],
+          ),
+        ),
+      );
+    }
+  }
+
   Widget _buildVideoCallContent() {
     logger.debug('📹 [布局调试] 开始构建视频布局');
     logger.debug('📹 [布局调试] _isRemoteVideoInMainView: $_isRemoteVideoInMainView');
     logger.debug('📹 [布局调试] _localVideoView: ${_localVideoView != null ? "存在" : "null"}');
     logger.debug('📹 [布局调试] _remoteVideoView: ${_remoteVideoView != null ? "存在" : "null"}');
     logger.debug('📹 [布局调试] _isCameraOn: $_isCameraOn');
+    logger.debug('📹 [布局调试] _isRemoteVideoMuted: $_isRemoteVideoMuted');
     
     return Stack(
       fit: StackFit.expand,
       children: [
         // 大框视频 - 直接使用条件判断，避免null问题
-        if (_isRemoteVideoInMainView && _remoteVideoView != null)
-          Positioned.fill(child: _remoteVideoView!)
+        // 🔴 修复：远程视频在大框时，根据远程摄像头状态显示视频或占位符
+        if (_isRemoteVideoInMainView)
+          Positioned.fill(child: _buildRemoteVideoOrPlaceholder())
         else if (!_isRemoteVideoInMainView)
           // 🔴 修复：本地视频在大框时，根据摄像头状态显示视频或占位符
           Positioned.fill(child: _buildLocalVideoOrPlaceholder())
@@ -3327,7 +3371,8 @@ class _VoiceCallPageState extends State<VoiceCallPage> {
               ),
             ),
           )
-        else if (!_isRemoteVideoInMainView && _remoteVideoView != null)
+        // 🔴 修复：远程视频在小框时，根据远程摄像头状态显示视频或占位符
+        else if (!_isRemoteVideoInMainView)
           Positioned(
             top: 20,
             right: 20,
@@ -3352,38 +3397,7 @@ class _VoiceCallPageState extends State<VoiceCallPage> {
                 ),
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(10),
-                  child: _remoteVideoView!,
-                ),
-              ),
-            ),
-          )
-        else if (widget.callType == CallType.video)
-          // 如果小视频没有准备好，显示占位框（也可以点击切换）
-          Positioned(
-            top: 20,
-            right: 20,
-            child: GestureDetector(
-              onTap: () {
-                logger.debug('📹 [点击事件] 占位小框被点击，准备切换画面');
-                _swapVideoViews();
-              },
-              child: Container(
-                width: 120,
-                height: 160,
-                decoration: BoxDecoration(
-                  color: Colors.black45,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.white, width: 2),
-                ),
-                child: Center(
-                  child: Text(
-                    _isRemoteVideoInMainView ? '等待本地视频...' : '等待对方视频...',
-                    style: const TextStyle(
-                      color: Colors.white70,
-                      fontSize: 10,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
+                  child: _buildRemoteVideoOrPlaceholder(isSmallView: true),
                 ),
               ),
             ),

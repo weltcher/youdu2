@@ -69,6 +69,7 @@ class _GroupVideoCallPageState extends State<GroupVideoCallPage> {
   // 视频控制器 - 群组视频通话需要支持多个远程视频视图
   AgoraVideoView? _localVideoView;
   final Map<int, AgoraVideoView> _remoteVideoViews = {}; // 远程用户视频视图映射
+  final Map<int, bool> _remoteVideoMuted = {}; // 🔴 新增：远程用户视频静音状态映射
 
   String _statusText = '正在连接...';
   String? _exitStatusText; // 退出状态文本（"正在退出..."或"正在最小化..."）
@@ -190,6 +191,7 @@ class _GroupVideoCallPageState extends State<GroupVideoCallPage> {
     // 清理视频视图
     _localVideoView = null;
     _remoteVideoViews.clear();
+    _remoteVideoMuted.clear(); // 🔴 新增：清理远程视频静音状态
 
     // 🔴 优化：移除这里的 stopPreview 调用
     // 原因：
@@ -260,6 +262,7 @@ class _GroupVideoCallPageState extends State<GroupVideoCallPage> {
         setState(() {
           _connectedMemberIds.remove(uid);
           _remoteVideoViews.remove(uid); // 🔴 修复：移除视频视图
+          _remoteVideoMuted.remove(uid); // 🔴 新增：移除视频静音状态
           _statusText = '通话中 (${_connectedMemberIds.length}人)';
         });
       }
@@ -314,6 +317,7 @@ class _GroupVideoCallPageState extends State<GroupVideoCallPage> {
 
                 // 移除视频视图
                 _remoteVideoViews.remove(userId);
+                _remoteVideoMuted.remove(userId); // 🔴 新增：移除视频静音状态
 
                 // 🔴 修复：从显示列表中完全移除该成员
                 final userIndex = _currentGroupCallUserIds.indexOf(userId);
@@ -329,6 +333,16 @@ class _GroupVideoCallPageState extends State<GroupVideoCallPage> {
             });
           }
         };
+
+    // 🔴 新增：监听远程用户视频静音状态变化
+    _agoraService.onRemoteVideoMuted = (uid, isMuted) {
+      if (_disposed || !mounted) return;
+      logger.debug('📹 [群组视频] 远程用户视频静音状态变化: uid=$uid, isMuted=$isMuted');
+      
+      setState(() {
+        _remoteVideoMuted[uid] = isMuted;
+      });
+    };
   }
 
   // 创建远程用户的视频视图
@@ -1367,6 +1381,17 @@ class _GroupVideoCallPageState extends State<GroupVideoCallPage> {
 
     // 如果是远程用户，显示远程视频
     if (_remoteVideoViews.containsKey(userId)) {
+      // 🔴 新增：检查远程用户是否关闭了摄像头
+      final isRemoteMuted = _remoteVideoMuted[userId] ?? false;
+      if (isRemoteMuted) {
+        // 远程用户关闭了摄像头，显示占位符
+        return Container(
+          color: Colors.black,
+          child: const Center(
+            child: Icon(Icons.videocam_off, size: 32, color: Colors.white54),
+          ),
+        );
+      }
       return GestureDetector(
         onTap: () => _showFullscreenVideo(
           memberName: displayName,

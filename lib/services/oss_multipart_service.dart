@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:http/http.dart' as http;
@@ -228,7 +229,7 @@ class OSSMultipartService {
           'Authorization': 'Bearer $token',
         },
         body: json.encode(requestBody),
-      );
+      ).timeout(const Duration(seconds: 30));
 
       logger.debug('📥 初始化分片上传响应:');
       logger.debug('   状态码: ${response.statusCode}');
@@ -275,7 +276,7 @@ class OSSMultipartService {
           'part_number': partNumber,
           'expire_seconds': defaultExpireSeconds,
         }),
-      );
+      ).timeout(const Duration(seconds: 30));
 
       if (signResponse.statusCode != 200) {
         final errorData = json.decode(utf8.decode(signResponse.bodyBytes));
@@ -344,7 +345,7 @@ class OSSMultipartService {
       request.bodyBytes = data;
       request.headers['Content-Length'] = data.length.toString();
 
-      final streamedResponse = await request.send();
+      final streamedResponse = await request.send().timeout(const Duration(seconds: 60));
       final response = await http.Response.fromStream(streamedResponse);
 
       if (response.statusCode == 200 || response.statusCode == 204) {
@@ -382,7 +383,7 @@ class OSSMultipartService {
           'object_key': objectKey,
           'expire_seconds': defaultExpireSeconds,
         }),
-      );
+      ).timeout(const Duration(seconds: 30));
 
       if (signResponse.statusCode != 200) {
         final errorData = json.decode(utf8.decode(signResponse.bodyBytes));
@@ -411,7 +412,7 @@ class OSSMultipartService {
           'Content-Type': 'application/xml; charset=utf-8',
         },
         body: xmlBody,
-      );
+      ).timeout(const Duration(seconds: 30));
 
       if (completeResponse.statusCode == 200) {
         // 优先使用predictedUrl（后端返回的）
